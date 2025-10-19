@@ -1,0 +1,60 @@
+apiVersion: kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: batch-processor-night
+  namespace: data-pipeline
+spec:
+  # Target the batch processing deployment
+  targetRef:
+    kind: Deployment
+    name: batch-processor
+    # apiVersion defaults to apps/v1
+
+  # Use UTC for global operations
+  timezone: UTC
+
+  # No replicas during standard hours
+  defaultReplicas: 0
+
+  # Night shift windows with cross-midnight handling
+  windows:
+  # Weeknight processing: 10 PM to 6 AM next day
+  - days: [Mon, Tue, Wed, Thu, Fri]
+    start: "22:00"  # Starts at 10 PM on listed day
+    end: "06:00"    # Ends at 6 AM next calendar day (cross-midnight)
+    replicas: 8
+
+  # Weekend extended processing: Friday night through Monday morning
+  - days: [Fri]
+    start: "22:00"
+    end: "06:00"    # Saturday 6 AM
+    replicas: 12
+
+  - days: [Sat]
+    start: "00:00"  # Full Saturday
+    end: "23:59"
+    replicas: 12
+
+  - days: [Sun]
+    start: "00:00"  # Full Sunday
+    end: "23:59"
+    replicas: 12
+
+  - days: [Sun]
+    start: "22:00"  # Sunday night into Monday
+    end: "06:00"    # Monday 6 AM
+    replicas: 8
+
+  # Special maintenance window with override (last wins)
+  - days: [Wed]
+    start: "02:00"
+    end: "04:00"
+    replicas: 2  # Reduced capacity during maintenance
+
+  # No holidays configuration - runs every night
+
+  # No grace period for batch jobs
+  gracePeriodSeconds: 0
+
+  # Active scaling
+  pause: false

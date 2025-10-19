@@ -1,0 +1,231 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: timewindowscalers.kyklos.io
+spec:
+  group: kyklos.io
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        description: TimeWindowScaler manages time-based scaling of Kubernetes workloads
+        properties:
+          apiVersion:
+            type: string
+            description: APIVersion defines the versioned schema
+          kind:
+            type: string
+            description: Kind is a string value representing the resource
+          metadata:
+            type: object
+            description: Standard Kubernetes metadata
+          spec:
+            type: object
+            description: Specification of the time window scaling behavior
+            required:
+            - targetRef
+            - timezone
+            - windows
+            properties:
+              targetRef:
+                type: object
+                description: Reference to the target resource to scale
+                required:
+                - kind
+                - name
+                properties:
+                  apiVersion:
+                    type: string
+                    description: API version of the target resource
+                    default: apps/v1
+                  kind:
+                    type: string
+                    description: Kind of the target resource
+                    enum:
+                    - Deployment
+                  name:
+                    type: string
+                    description: Name of the target resource
+                    minLength: 1
+                  namespace:
+                    type: string
+                    description: Namespace of the target resource (defaults to object namespace)
+              timezone:
+                type: string
+                description: IANA timezone for time calculations
+                minLength: 1
+                example: America/New_York
+              defaultReplicas:
+                type: integer
+                description: Replica count when no windows match
+                format: int32
+                minimum: 0
+                default: 0
+              windows:
+                type: array
+                description: Time windows defining scaling behavior
+                minItems: 1
+                items:
+                  type: object
+                  required:
+                  - days
+                  - start
+                  - end
+                  - replicas
+                  properties:
+                    days:
+                      type: array
+                      description: Days when this window is active
+                      minItems: 1
+                      items:
+                        type: string
+                        enum:
+                        - Mon
+                        - Tue
+                        - Wed
+                        - Thu
+                        - Fri
+                        - Sat
+                        - Sun
+                    start:
+                      type: string
+                      description: Start time in HH:MM format (inclusive)
+                      pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+                      example: "09:00"
+                    end:
+                      type: string
+                      description: End time in HH:MM format (exclusive)
+                      pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+                      example: "17:00"
+                    replicas:
+                      type: integer
+                      description: Desired replica count during this window
+                      format: int32
+                      minimum: 0
+              holidays:
+                type: object
+                description: Holiday handling configuration
+                properties:
+                  mode:
+                    type: string
+                    description: How to handle holidays
+                    default: ignore
+                    enum:
+                    - ignore
+                    - treat-as-closed
+                    - treat-as-open
+                  sourceRef:
+                    type: object
+                    description: Reference to ConfigMap containing holiday dates
+                    properties:
+                      name:
+                        type: string
+                        description: Name of the ConfigMap
+                        minLength: 1
+              gracePeriodSeconds:
+                type: integer
+                description: Delay in seconds before applying downscale
+                format: int32
+                minimum: 0
+                default: 0
+              pause:
+                type: boolean
+                description: Suspend target modifications
+                default: false
+          status:
+            type: object
+            description: Current state of the TimeWindowScaler
+            properties:
+              currentWindow:
+                type: string
+                description: Label of the currently active window
+                example: BusinessHours
+              effectiveReplicas:
+                type: integer
+                description: Currently desired replica count
+                format: int32
+                minimum: 0
+              lastScaleTime:
+                type: string
+                description: RFC3339 timestamp of last scale operation
+                format: date-time
+              targetObservedReplicas:
+                type: integer
+                description: Last observed replica count of target
+                format: int32
+                minimum: 0
+              observedGeneration:
+                type: integer
+                description: Last processed spec generation
+                format: int64
+              conditions:
+                type: array
+                description: Current conditions of the TimeWindowScaler
+                items:
+                  type: object
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  properties:
+                    type:
+                      type: string
+                      description: Type of condition
+                      enum:
+                      - Ready
+                      - Reconciling
+                      - Degraded
+                    status:
+                      type: string
+                      description: Status of the condition
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                    reason:
+                      type: string
+                      description: Machine-readable reason for condition
+                      example: Reconciled
+                    message:
+                      type: string
+                      description: Human-readable message
+                    lastTransitionTime:
+                      type: string
+                      description: Last time condition changed
+                      format: date-time
+                    observedGeneration:
+                      type: integer
+                      description: Generation when condition was observed
+                      format: int64
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Target
+      type: string
+      description: Target resource
+      jsonPath: .spec.targetRef.name
+    - name: Window
+      type: string
+      description: Current window
+      jsonPath: .status.currentWindow
+    - name: Replicas
+      type: integer
+      description: Effective replicas
+      jsonPath: .status.effectiveReplicas
+    - name: Ready
+      type: string
+      description: Ready condition
+      jsonPath: .status.conditions[?(@.type=="Ready")].status
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+  scope: Namespaced
+  names:
+    plural: timewindowscalers
+    singular: timewindowscaler
+    kind: TimeWindowScaler
+    shortNames:
+    - tws

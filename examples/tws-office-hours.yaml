@@ -1,0 +1,55 @@
+apiVersion: kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: webapp-office-hours
+  namespace: production
+spec:
+  # Target the webapp deployment in same namespace
+  targetRef:
+    kind: Deployment
+    name: webapp
+    # namespace defaults to production (same as this object)
+
+  # Use Eastern Time with automatic DST handling
+  timezone: America/New_York
+
+  # Scale to 2 replicas outside business hours
+  defaultReplicas: 2
+
+  # Define business hours windows
+  windows:
+  # Morning ramp-up: 3 replicas from 7-9 AM
+  - days: [Mon, Tue, Wed, Thu, Fri]
+    start: "07:00"  # Inclusive: scaling happens at exactly 7:00 AM
+    end: "09:00"    # Exclusive: window ends just before 9:00 AM
+    replicas: 3
+
+  # Peak hours: 10 replicas during core business hours
+  - days: [Mon, Tue, Wed, Thu, Fri]
+    start: "09:00"
+    end: "17:00"
+    replicas: 10
+
+  # Evening wind-down: 5 replicas until 7 PM
+  - days: [Mon, Tue, Wed, Thu, Fri]
+    start: "17:00"
+    end: "19:00"
+    replicas: 5
+
+  # Weekend reduced capacity: 1 replica
+  - days: [Sat, Sun]
+    start: "00:00"
+    end: "23:59"  # Nearly full day (excludes last minute)
+    replicas: 1
+
+  # Holiday configuration
+  holidays:
+    mode: treat-as-closed  # Use defaultReplicas (2) on holidays
+    sourceRef:
+      name: company-holidays  # ConfigMap with keys like "2025-12-25"
+
+  # Grace period for smoother downscaling
+  gracePeriodSeconds: 300  # Wait 5 minutes before reducing replicas
+
+  # Not paused - actively managing the deployment
+  pause: false

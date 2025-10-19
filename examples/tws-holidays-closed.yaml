@@ -1,0 +1,74 @@
+apiVersion: kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: store-api-holidays
+  namespace: retail
+spec:
+  # Target the store API deployment
+  targetRef:
+    kind: Deployment
+    name: store-api
+    namespace: retail  # Explicitly specified (must match metadata.namespace)
+
+  # Use store's local timezone
+  timezone: America/Chicago
+
+  # Minimal replicas when store is closed
+  defaultReplicas: 1
+
+  # Store hours with holiday awareness
+  windows:
+  # Weekday hours: 8 AM to 9 PM
+  - days: [Mon, Tue, Wed, Thu, Fri]
+    start: "08:00"
+    end: "21:00"
+    replicas: 6
+
+  # Saturday: 9 AM to 10 PM (different hours, more capacity)
+  - days: [Sat]
+    start: "09:00"
+    end: "22:00"
+    replicas: 8
+
+  # Sunday: 10 AM to 7 PM (reduced hours)
+  - days: [Sun]
+    start: "10:00"
+    end: "19:00"
+    replicas: 4
+
+  # Black Friday override (last window wins for overlap)
+  - days: [Fri]
+    start: "00:00"  # Midnight opening on Black Friday
+    end: "23:59"    # Nearly 24 hours
+    replicas: 15
+
+  # Holiday configuration for closures
+  holidays:
+    mode: treat-as-closed  # Store closed on holidays (uses defaultReplicas: 1)
+    sourceRef:
+      name: retail-holidays  # ConfigMap containing dates like:
+                            # "2025-12-25": "Christmas Day"
+                            # "2025-01-01": "New Year's Day"
+                            # "2025-11-28": "Thanksgiving"
+
+  # Longer grace for customer experience
+  gracePeriodSeconds: 600  # 10 minute grace when scaling down
+
+  # Active management
+  pause: false
+
+---
+# Example ConfigMap for holidays (referenced above)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: retail-holidays
+  namespace: retail
+data:
+  # Keys must be ISO date format yyyy-mm-dd
+  # Values are ignored by controller but useful for humans
+  "2025-01-01": "New Year's Day"
+  "2025-07-04": "Independence Day"
+  "2025-11-28": "Thanksgiving"
+  "2025-12-25": "Christmas Day"
+  "2025-12-31": "New Year's Eve"
