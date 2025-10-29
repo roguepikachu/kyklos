@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- kyklos_v1alpha1_timewindowscaler.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

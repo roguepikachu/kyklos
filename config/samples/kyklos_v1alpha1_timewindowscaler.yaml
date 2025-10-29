@@ -1,0 +1,9 @@
+apiVersion: kyklos.kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  labels:
+    app.kubernetes.io/name: kyklos
+    app.kubernetes.io/managed-by: kustomize
+  name: timewindowscaler-sample
+spec:
+  # TODO(user): Add fields here
