@@ -82,9 +82,15 @@ For a Friday 22:00 - 02:00 window:
 
 The window does NOT match Saturday 22:00 (that would need `days: [Sat]`).
 
-## Effective Replicas
+## Effective Replicas (Current Desired State)
 
-The effective replica count is the number of replicas Kyklos wants your deployment to have right now.
+The **effectiveReplicas** field in status shows the number of replicas Kyklos has computed as correct for right now, based on current time and window matching. This is the replica count Kyklos will write to the target deployment.
+
+**Terminology clarification:**
+- `windows[].replicas` - Configured in spec, what you want during each window
+- `defaultReplicas` - Configured in spec, what you want when no windows match
+- `effectiveReplicas` - Computed in status, what controller wants RIGHT NOW
+- `targetObservedReplicas` - Observed in status, what the deployment actually has
 
 ### Computation Flow
 
@@ -221,6 +227,8 @@ The controller schedules reconciliation at the next window boundary to minimize 
 
 - Next boundaries: Tuesday 17:00, Tuesday 22:00, Wednesday 09:00
 - **Controller requeues at Tuesday 17:00** (earliest after now)
+
+> **Note:** Holiday support is available in v0.1 with ConfigMap-based sources. External calendar sync and advanced recurring patterns are planned for v0.2.
 
 ## Holiday Handling
 

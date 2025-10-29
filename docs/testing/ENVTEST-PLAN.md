@@ -635,6 +635,35 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 - Concurrent updates
 - Webhook rejection paths
 
+## Pause Functionality Scenarios
+
+### PAUSE-1: Pause During Active Window
+**Setup:** Window active, replicas=5
+**Action:** Set spec.pause=true
+**Expected:**
+- Controller computes effectiveReplicas=5
+- No write to target deployment
+- status.effectiveReplicas=5
+- Ready=True if target already at 5
+- ScalingSkipped event emitted
+
+### PAUSE-2: Pause During Grace Period
+**Setup:** Grace period active (transitioning 5→0)
+**Action:** Set spec.pause=true during grace
+**Expected:**
+- Grace period timer stops
+- Replicas remain at 5
+- gracePeriodExpiry field cleared
+- ScalingSkipped event emitted
+
+### PAUSE-3: Resume from Pause
+**Setup:** Paused with replicas=5, window now inactive (should be 0)
+**Action:** Set spec.pause=false
+**Expected:**
+- Controller immediately writes replicas=0
+- ScaledDown event emitted
+- Ready condition updated
+
 ## Success Criteria
 
 1. All scenarios pass consistently

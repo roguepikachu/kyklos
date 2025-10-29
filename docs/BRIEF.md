@@ -29,8 +29,8 @@ Kyklos is a Kubernetes operator that scales workloads based on time windows with
 
 ## Success Criteria (Verifiable in 15 Minutes Locally)
 1. Create TimeWindowScaler CR with morning window (09:00-17:00 IST)
-2. Target Deployment scales to activeReplicas=3 at window start
-3. Target Deployment scales to inactiveReplicas=0 at window end
+2. Target Deployment scales to windows[].replicas=3 during window
+3. Target Deployment scales to defaultReplicas=0 outside window
 4. Status shows current state (Active/Inactive/GracePeriod)
 5. Prometheus metrics expose current window state and scale events
 
@@ -58,9 +58,9 @@ Kyklos is a Kubernetes operator that scales workloads based on time windows with
 
 ## Glossary
 
-**Active Window**: Time period when workload should be scaled to activeReplicas
+**Active Window**: Time period when a window matches and workload scales to windows[].replicas
 
-**Inactive Window**: Time period outside active window when workload scales to inactiveReplicas
+**Inactive Window**: Time period when no windows match and workload scales to defaultReplicas
 
 **Grace Period**: Delay before scale-down occurs, allowing workload to complete tasks
 

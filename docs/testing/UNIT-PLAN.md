@@ -739,6 +739,39 @@ func BenchmarkBoundaryCalculation(b *testing.B) {
 - Empty/nil inputs
 - Maximum/minimum values
 
+## DST Test Scenarios (Using Fixed Test Dates)
+
+### DST-1: Spring Forward Transition
+**Test Date:** 2025-03-09 (Sunday)
+**Timezone:** America/New_York
+**Fixture:** test/fixtures/dst-spring-2025.yaml
+**Scenario:**
+- Window: 01:00-04:00 on Sunday
+- At 01:30 EST: window should be active
+- At 02:30: this time does not exist (jumped to 03:30 EDT)
+- At 03:30 EDT: window should be active
+- Verify: Window duration is 2 hours, not 3
+
+### DST-2: Fall Back Transition
+**Test Date:** 2025-11-02 (Sunday)
+**Timezone:** America/New_York
+**Fixture:** test/fixtures/dst-fall-2025.yaml
+**Scenario:**
+- Window: 01:00-04:00 on Sunday
+- At 01:30 EDT (first occurrence): window active
+- At 01:30 EST (second occurrence after fallback): window still active
+- Verify: Window duration is 4 hours, not 3
+
+### DST-3: Cross-Midnight with Spring Forward
+**Test Date:** 2025-03-08 22:00 to 2025-03-09 06:00
+**Timezone:** America/New_York
+**Fixture:** test/fixtures/dst-cross-midnight-2025.yaml
+**Scenario:**
+- Window: 22:00 Saturday to 06:00 Sunday
+- Window spans midnight and DST transition
+- Verify: Window remains active across both boundaries
+- Verify: Total duration is 7 hours (lost 1 hour to DST)
+
 ## Success Criteria
 
 1. All test cases pass with controlled time

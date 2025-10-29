@@ -53,6 +53,11 @@ NAME                                      READY   STATUS    RESTARTS   AGE
 kyklos-controller-manager-abc123-xyz      1/1     Running   0          30s
 ```
 
+4. **Run smoke test** (optional but recommended)
+   ```bash
+   make test || echo "Tests will be available in implementation phase"
+   ```
+
 ### Your First TimeWindowScaler
 
 Create a deployment and scale it based on office hours:
