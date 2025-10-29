@@ -1,0 +1,76 @@
+TaskID,Milestone,Module,Task,Dependencies,Owner,EstDays,Priority,AcceptanceCriteria
+T001,M1,Foundation,Create Go module and directory structure,None,DevOps,0.5,P0,go.mod exists with correct module path; directory structure matches REPO-LAYOUT.md
+T002,M1,API,Define TimeWindowScalerSpec struct in api/v1alpha1,T001,API-Designer,0.5,P0,Struct has all fields from CRD-SPEC.md with json tags and godoc
+T003,M1,API,Define TimeWindowScalerStatus struct in api/v1alpha1,T001,API-Designer,0.5,P0,Struct has effectiveReplicas observedGeneration currentWindow lastScaleTime gracePeriodExpiry
+T004,M1,API,Add kubebuilder markers for CRD validation,T002-T003,API-Designer,0.5,P0,Markers for required fields minLength pattern enums match CRD-SPEC.md
+T005,M1,API,Generate CRD manifests with make manifests,T004,API-Designer,0.25,P0,config/crd/bases/kyklos.io_timewindowscalers.yaml exists and validates with kubectl
+T006,M1,API,Install CRD to test cluster and validate,T005,API-Designer,0.25,P0,kubectl apply succeeds; kubectl get crd shows timewindowscalers.kyklos.io
+T007,M1,TimeCalc,Implement window matching algorithm in timecalc/matcher.go,T001,Controller-Designer,1.0,P0,computeEffectiveReplicas(spec windows defaultReplicas localTime) returns correct replicas for given time
+T008,M1,TimeCalc,Write unit tests for simple window matching,T007,Controller-Designer,1.0,P0,Tests cover: in-window out-window boundary cases; 100% coverage for matcher.go
+T009,M1,TimeCalc,Implement next boundary calculation in timecalc/boundary.go,T007,Controller-Designer,1.0,P1,computeNextBoundary(spec localTime) returns next window start or end timestamp
+T010,M1,TimeCalc,Write unit tests for boundary calculations,T009,Controller-Designer,0.5,P1,Tests cover: next start next end 24-hour wrap; 100% coverage for boundary.go
+T011,M1,Controller,Create TimeWindowScalerReconciler struct in controllers/,T002-T003,Controller-Designer,0.5,P0,Reconciler implements controller-runtime Reconciler interface with client scheme recorder
+T012,M1,Controller,Implement basic Reconcile function (validate load timezone),T011,Controller-Designer,1.0,P0,Reconcile loads timezone from spec.timezone; returns error if invalid; sets Degraded condition
+T013,M1,Controller,Implement target Deployment GET in Reconcile,T012,Controller-Designer,0.5,P0,Reconcile fetches Deployment using targetRef; handles not-found with Ready=False; reads spec.replicas
+T014,M1,Controller,Integrate timecalc into Reconcile for effectiveReplicas,T007-T013,Controller-Designer,0.5,P0,Reconcile calls computeEffectiveReplicas with current localTime; stores result in effectiveReplicas var
+T015,M1,Controller,Implement conditional Deployment PATCH for replicas,T014,Controller-Designer,1.0,P0,If targetSpec != effectiveReplicas PATCH Deployment with new replicas; idempotent (skip if equal)
+T016,M1,StatusWriter,Create statuswriter package with UpdateStatus function,T003,Controller-Designer,0.5,P1,UpdateStatus(ctx client tws effectiveReplicas conditions observedGen) patches status subresource
+T017,M1,StatusWriter,Integrate statuswriter into Reconcile,T016-T015,Controller-Designer,0.5,P1,Reconcile calls statuswriter.UpdateStatus before return; status.effectiveReplicas updated
+T018,M1,Controller,Implement basic requeue scheduling (60s fixed),T014,Controller-Designer,0.25,P1,Reconcile returns ctrl.Result{RequeueAfter: 60s} for stable state
+T019,M1,RBAC,Add kubebuilder RBAC markers to controller,T011,Security-Designer,0.5,P0,Markers for get/list/watch timewindowscalers deployments; update timewindowscalers/status
+T020,M1,RBAC,Generate RBAC manifests with make manifests,T019,Security-Designer,0.25,P0,config/rbac/role.yaml and service_account.yaml generated correctly
+T021,M1,Manager,Wire up controller in cmd/controller/main.go,T011-T020,Controller-Designer,0.5,P0,main.go creates manager adds controller starts manager with leader election disabled (v0.1)
+T022,M1,Manager,Build controller binary with make build,T021,DevOps,0.25,P0,bin/controller binary exists and runs without errors when executed
+T023,M1,Manager,Create Dockerfile for controller image,T022,DevOps,0.5,P0,Multi-stage Dockerfile builds binary and creates minimal runtime image (<100MB)
+T024,M1,Kustomize,Create manager Deployment manifest in config/manager/,T023,DevOps,0.5,P0,deployment.yaml with controller image resource limits probes args
+T025,M1,Kustomize,Create default kustomization.yaml,T024-T005-T020,DevOps,0.25,P0,config/default/kustomization.yaml includes crd rbac manager
+T026,M1,Testing,Write envtest suite for basic reconciliation,T011-T015,Test-Engineer,1.0,P1,Test creates TWS and Deployment; reconciles; asserts Deployment.spec.replicas updated
+T027,M1,Testing,Add test cases for in-window and out-of-window,T026,Test-Engineer,1.0,P1,Test with fixed time during window (replicas=10) and outside window (replicas=2); both pass
+T028,M1,Samples,Create basic TimeWindowScaler sample YAML,T005,Docs-Designer,0.25,P1,config/samples/basic.yaml with 09:00-17:00 window Mon-Fri 10 replicas defaultReplicas=2
+T029,M1,Deploy,Deploy controller to kind cluster and verify,T025-T028,DevOps,0.5,P0,kubectl apply config/default; controller pod running; logs show reconciliation
+T030,M1,Deploy,Test end-to-end scaling with sample TWS,T029,Test-Engineer,0.5,P0,Create sample TWS; verify Deployment scales; check status; delete TWS; confirm cleanup
+T031,M1,Docs,Write README.md with quick start guide,T030,Docs-Designer,1.0,P0,README has: overview quick-start (15 min) installation usage; tested end-to-end
+T032,M2,TimeCalc,Implement grace period state machine in timecalc/grace.go,T007,Controller-Designer,1.0,P0,applyGracePeriod(spec status effectiveReplicas now) returns finalReplicas and expiryTime
+T033,M2,TimeCalc,Write unit tests for grace period logic,T032,Controller-Designer,1.0,P0,Tests: no grace on scale-up; grace starts on scale-down; grace expires after duration; grace cancels on scale-up
+T034,M2,Controller,Integrate grace period into Reconcile after effectiveReplicas,T032-T014,Controller-Designer,0.5,P0,Reconcile calls applyGracePeriod; uses finalReplicas for PATCH; updates status.gracePeriodExpiry
+T035,M2,Controller,Test controller restart during grace period,T034-T026,Test-Engineer,0.5,P1,Envtest: start grace; stop controller; advance time; restart; verify grace still respected
+T036,M2,TimeCalc,Implement cross-midnight window detection in timecalc/matcher.go,T007,Controller-Designer,1.0,P0,Enhance window matching: if end < start check current day and yesterday for match
+T037,M2,TimeCalc,Write unit tests for cross-midnight windows,T036,Controller-Designer,1.0,P0,Tests: Friday 22:00-02:00 matches Fri 23:00 and Sat 01:00; does not match Sat 03:00
+T038,M2,Controller,Add pause field handling to Reconcile,T012,Controller-Designer,0.5,P0,If spec.pause==true compute effectiveReplicas update status emit event but skip PATCH
+T039,M2,StatusWriter,Add Reconciling and Degraded conditions to statuswriter,T016,Controller-Designer,1.0,P1,UpdateStatus sets all three conditions (Ready Reconciling Degraded) with reasons from STATUS-CONDITIONS.md
+T040,M2,EventRecorder,Create events package with EmitScaleUp/Down/Skipped,T003,Observability-Designer,1.0,P1,EmitScaleUp(recorder tws from to window reason); EmitScaledDown(...); EmitScalingSkipped(...)
+T041,M2,EventRecorder,Implement 5-minute event deduplication,T040,Observability-Designer,0.5,P1,Store last event timestamp+fields per TWS; skip if same event within 5 minutes
+T042,M2,EventRecorder,Integrate event emission into Reconcile,T040-T015,Controller-Designer,0.5,P1,Reconcile emits ScaledUp when replicas increase; ScaledDown when decrease; ScalingSkipped when paused
+T043,M2,Controller,Implement requeue scheduling with jitter and boundary,T009,Controller-Designer,1.0,P1,computeRequeueAfter(nextBoundary now) returns duration with jitter(5-25s) quantized to 10s min 30s max 24h
+T044,M2,Testing,Add envtest scenarios for grace pause cross-midnight,T034-T038,Test-Engineer,2.0,P1,Envtest: grace period scenario; pause scenario; cross-midnight scenario; all pass
+T045,M2,RBAC,Add ClusterRole for cross-namespace scaling,T020,Security-Designer,0.5,P0,config/rbac/clusterrole.yaml with get/list/watch deployments in all namespaces
+T046,M2,Docs,Document grace period pause cross-midnight in CONCEPTS.md,T031,Docs-Designer,1.0,P1,CONCEPTS.md sections for each feature with examples
+T047,M3,TimeCalc,Implement holiday evaluation in timecalc/holiday.go,T007,Controller-Designer,1.0,P0,evaluateHoliday(holidayMap date mode windows defaultReplicas) returns replicas considering holiday
+T048,M3,TimeCalc,Write unit tests for holiday modes,T047,Controller-Designer,1.0,P0,Tests: ignore (use normal window); treat-as-closed (use defaultReplicas); treat-as-open (use max window replicas)
+T049,M3,Controller,Load holiday ConfigMap in Reconcile with caching,T047,Controller-Designer,1.0,P0,If spec.holidays.sourceRef load ConfigMap; parse dates into map; cache in controller struct; handle missing gracefully
+T050,M3,Controller,Integrate holiday evaluation before window matching,T047-T049,Controller-Designer,0.5,P0,Reconcile calls evaluateHoliday; if holiday applies use holiday replicas instead of window replicas
+T051,M3,EventRecorder,Add WindowOverride and HolidayDetected events,T040,Observability-Designer,0.5,P1,EmitWindowOverride(date mode replicas normalWindow); EmitHolidayDetected(date source mode)
+T052,M3,Controller,Emit holiday events when holiday detected,T051-T050,Controller-Designer,0.25,P1,Reconcile emits HolidayDetected at start of holiday day; emits WindowOverride when overriding window
+T053,M3,Testing,Create holiday test fixtures (ConfigMap + TWS),T049,Test-Engineer,0.5,P1,test/fixtures/holiday-configmap.yaml with sample dates; TWS with each holiday mode
+T054,M3,Testing,Add envtest scenarios for holiday modes,T050-T053,Test-Engineer,1.0,P1,Envtest: test each mode (ignore closed open); test missing ConfigMap; all pass
+T055,M3,Samples,Create holiday example YAML in config/samples/,T053,Docs-Designer,0.5,P1,config/samples/with-holidays.yaml showing treat-as-closed mode with ConfigMap reference
+T056,M4,Metrics,Define Prometheus metrics in metrics/metrics.go,T003,Observability-Designer,1.0,P0,Define counters (scale_events_total) gauges (current_state effective_replicas) histograms (reconcile_duration_seconds)
+T057,M4,Metrics,Register metrics in init and expose on /metrics,T056,Observability-Designer,0.5,P0,Metrics registered; controller exposes /metrics endpoint on port 8080
+T058,M4,Metrics,Create RecordScaleEvent/StateChange/ReconcileDuration functions,T056,Observability-Designer,0.5,P1,Functions increment counters set gauges with labels (tws_name namespace window state)
+T059,M4,Controller,Integrate metrics recording into Reconcile,T058-T015,Controller-Designer,0.5,P1,Reconcile records reconcile duration at end; records scale events; updates state gauge
+T060,M4,Logging,Add structured logging with correlation IDs to Reconcile,T012,Controller-Designer,1.0,P1,Each reconcile generates correlation ID; logs include correlationID tws namespace generation
+T061,M4,Observability,Create Grafana dashboard JSON for TWS metrics,T056,Observability-Designer,1.0,P2,Dashboard panels: current state effective replicas scale events over time reconcile duration
+T062,M4,Observability,Write Prometheus alerting rules,T056,Observability-Designer,0.5,P2,Alert rules: Degraded for >10min; Ready=False for >30min; Reconciling for >5min
+T063,M4,Docs,Document metrics and logs in OPERATIONS.md,T060-T062,Docs-Designer,1.0,P1,OPERATIONS.md lists all metrics meanings labels; log format examples; alert rules
+T064,M5,Testing,Write E2E test scenario: office hours,T030,Test-Engineer,1.0,P0,E2E test in test/e2e/: creates TWS with 09:00-17:00; fast-forwards time; verifies scaling; cleans up
+T065,M5,Testing,Write E2E test scenario: cross-midnight,T037-T064,Test-Engineer,1.0,P0,E2E test: TWS with 22:00-02:00 window; fast-forward through midnight; verify scaling at 23:00 and 01:00
+T066,M5,Testing,Write E2E test scenario: pause behavior,T038-T064,Test-Engineer,1.0,P0,E2E test: create TWS; scale Deployment manually; pause TWS; verify no correction; unpause; verify correction
+T067,M5,Testing,Create DST spring forward test with fixed date,T008,Test-Engineer,1.0,P1,Unit test: date 2025-03-09 02:30:00; window 01:00-03:00; verify window duration affected correctly
+T068,M5,Testing,Create DST fall back test with fixed date,T008,Test-Engineer,1.0,P1,Unit test: date 2025-11-02 02:30:00; window 01:00-03:00; verify window duration extended correctly
+T069,M5,Testing,Test manual drift correction scenario,T015-T064,Test-Engineer,0.5,P1,E2E test: TWS running; manually scale Deployment to different replicas; wait for reconcile; verify correction
+T070,M5,Docs,Complete README.md with all features,T031,Docs-Designer,1.0,P0,README updated with: grace period holidays pause metrics cross-midnight; quick start still <15min
+T071,M5,Docs,Write TROUBLESHOOTING.md with common issues,None,Docs-Designer,1.0,P0,TROUBLESHOOTING.md covers: timezone errors target not found RBAC issues logs analysis metrics
+T072,M5,Docs,Create CONCEPTS.md explaining time windows and state machine,T046,Docs-Designer,1.5,P0,CONCEPTS.md explains: windows DST grace-period holidays state-transitions with diagrams
+T073,M5,Release,Build and tag container image v0.1.0,T023,DevOps,0.5,P0,Docker build and push to registry with tag v0.1.0; image pulls successfully
+T074,M5,Release,Generate all-in-one install YAML,T025,DevOps,0.5,P0,kubectl kustomize config/default > kyklos-v0.1.0.yaml; single file installs CRD RBAC controller
+T075,M5,Release,Create GitHub release with notes,T073-T074,DevOps,0.5,P0,GitHub release v0.1.0 with: container image link install YAML release notes (features known-issues)
