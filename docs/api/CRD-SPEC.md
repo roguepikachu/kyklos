@@ -23,9 +23,9 @@ Reference to the target resource to scale.
 | `namespace` | string | object namespace | Namespace of the target resource |
 
 **Validation Rules**:
-- `kind` must equal `Deployment` (enforced by admission webhook)
-- `name` must be non-empty
-- If `namespace` is specified, it must equal the TimeWindowScaler's namespace
+- `kind` must equal `Deployment` in v1alpha1 (enforced by CRD enum validation)
+- `name` must be non-empty (enforced by Kubernetes)
+- `namespace` may differ from TimeWindowScaler namespace (cross-namespace requires ClusterRole, see ADR-0002)
 
 ### spec.timezone (required)
 | Field | Type | Default | Description |
@@ -72,7 +72,7 @@ Holiday handling configuration.
 | `sourceRef.name` | string | optional | ConfigMap name containing holiday dates |
 
 **Mode Enum Values**:
-- `ignore`: Process windows normally on holidays
+- `ignore` (default): Process windows normally on holidays, no special handling
 - `treat-as-closed`: No windows match on holiday dates (uses defaultReplicas)
 - `treat-as-open`: Synthetic window with replicas = max(all defined window replicas)
 
@@ -113,6 +113,16 @@ Holiday handling configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `lastScaleTime` | string | RFC3339 timestamp of last scale operation |
+
+### status.gracePeriodExpiry
+| Field | Type | Description |
+|-------|------|-------------|
+| `gracePeriodExpiry` | string | RFC3339 timestamp when grace period expires (empty if not in grace) |
+
+**Semantics:**
+- Set to `now + spec.gracePeriodSeconds` when entering grace period
+- Cleared when grace expires or is cancelled by new window activation
+- Controller uses this to determine if still within grace period across restarts
 
 ### status.targetObservedReplicas
 | Field | Type | Description |

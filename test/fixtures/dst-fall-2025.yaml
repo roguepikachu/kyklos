@@ -1,0 +1,29 @@
+# DST Fall Back Test Case
+# Date: 2025-11-02 (First Sunday of November)
+# Timezone: America/New_York
+# Transition: 02:00 AM EDT → 01:00 AM EST (clock falls back 1 hour)
+# Test: Window spanning 01:00-04:00 should be 4 hours (includes 01:00-01:59 twice)
+# Hour 01:00-01:59 occurs twice on this date
+
+apiVersion: kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: dst-fall-test
+  namespace: test
+spec:
+  targetRef:
+    kind: Deployment
+    name: test-deployment
+  timezone: America/New_York
+  defaultReplicas: 1
+  windows:
+  - days: [Sun]
+    start: "01:00"
+    end: "04:00"
+    replicas: 5
+  # Expected behavior on 2025-11-02:
+  # - Window active 01:00-01:59 EDT (1 hour, first occurrence)
+  # - Clock falls back from 01:59:59 EDT to 01:00:00 EST
+  # - Window active 01:00-01:59 EST (1 hour, second occurrence)
+  # - Window active 02:00-03:59 EST (2 hours)
+  # - Total active duration: 4 hours instead of 3

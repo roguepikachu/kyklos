@@ -1,0 +1,31 @@
+# DST + Cross-Midnight Test Case
+# Date: 2025-03-08 to 2025-03-09 (Saturday night to Sunday morning)
+# Timezone: America/New_York
+# Window: 22:00 Saturday to 06:00 Sunday
+# DST transition at 02:00 Sunday (spring forward)
+# Test: Window should remain active across midnight and DST transition
+
+apiVersion: kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: dst-cross-midnight-test
+  namespace: test
+spec:
+  targetRef:
+    kind: Deployment
+    name: test-deployment
+  timezone: America/New_York
+  defaultReplicas: 1
+  windows:
+  - days: [Sat]
+    start: "22:00"
+    end: "06:00"
+    replicas: 5
+  # Expected behavior on 2025-03-08 22:00 to 2025-03-09 06:00:
+  # - Window active Saturday 22:00-23:59 EST (2 hours)
+  # - Midnight crosses to Sunday
+  # - Window active Sunday 00:00-01:59 EST (2 hours)
+  # - DST spring forward at 02:00 (clock jumps to 03:00)
+  # - Window active Sunday 03:00-05:59 EDT (3 hours)
+  # - Total active duration: 7 hours instead of 8 hours
+  # - Window ends at 06:00 EDT (equivalent to 05:00 EST)

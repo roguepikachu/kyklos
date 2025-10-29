@@ -2,6 +2,13 @@
 
 **Version:** 0.1.0 | **Last Updated:** 2025-10-19 | **Status:** Day 0 Planning
 
+## Version Requirements
+- **Project Version:** 0.1.0 (alpha)
+- **API Version:** kyklos.io/v1alpha1
+- **Kubernetes:** 1.25+ (tested on 1.28)
+- **Go:** 1.21+ for building controller
+- **Docker:** 24.0+ for building images
+
 ## Purpose
 Kyklos is a Kubernetes operator that scales workloads based on time windows with timezone-aware scheduling.
 
@@ -14,7 +21,7 @@ Kyklos is a Kubernetes operator that scales workloads based on time windows with
 
 ## Non-Goals for v0.1
 - CronJob-style syntax or arbitrary cron expressions
-- Calendar integration or holiday awareness
+- Advanced calendar features (recurring patterns, external calendar sync beyond ConfigMap)
 - Multi-day or weekly patterns beyond daily recurrence
 - Autoscaling integration (HPA/VPA)
 - Cost estimation or recommendations
@@ -69,9 +76,13 @@ Kyklos is a Kubernetes operator that scales workloads based on time windows with
 
 **Scale Subresource**: Kubernetes API for reading/writing replica counts
 
-**activeReplicas**: Desired replica count during active window
+**windows[].replicas**: Desired replica count when this window is active (configured in spec)
 
-**inactiveReplicas**: Desired replica count during inactive window (often 0)
+**defaultReplicas**: Replica count when no windows match (often 2 for availability, not 0)
+
+**effectiveReplicas**: The computed replica count right now (shown in status)
+
+**pause**: When true, controller computes state but doesn't modify target workload
 
 **crossMidnight**: Window spanning two calendar days (e.g., 22:00-02:00)
 

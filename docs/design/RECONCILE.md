@@ -70,8 +70,8 @@ The reconcile loop ensures the target workload's replica count matches the time-
 **Preconditions**: effectiveReplicas computed, status.effectiveReplicas available
 **Actions**:
 1. If effectiveReplicas >= status.effectiveReplicas: no grace needed
-2. If effectiveReplicas < status.effectiveReplicas && grace > 0:
-   - If !status.gracePeriodExpiry: set expiry = now + gracePeriodSeconds
+2. If effectiveReplicas < status.effectiveReplicas && spec.gracePeriodSeconds > 0:
+   - If !status.gracePeriodExpiry: set expiry = now + spec.gracePeriodSeconds
    - If now < status.gracePeriodExpiry: maintain previous replicas
    - If now >= status.gracePeriodExpiry: apply new replicas, clear expiry
 
@@ -90,11 +90,19 @@ The reconcile loop ensures the target workload's replica count matches the time-
 ### Step 7: Determine Write Need
 **Preconditions**: effectiveReplicas computed, target status known
 **Actions**:
-1. If spec.pause==true: skip write, set Ready based on alignment
+1. **If spec.pause==true**:
+   - Skip all writes to target workload
+   - Continue computing effectiveReplicas normally (show what WOULD happen)
+   - Update all status fields: effectiveReplicas, targetObservedReplicas, currentWindow, gracePeriodExpiry
+   - Set Ready condition:
+     - Ready=True if targetObservedReplicas == effectiveReplicas (aligned)
+     - Ready=False with reason=TargetMismatch if different (drift while paused)
+   - Emit ScalingSkipped event with message describing what would happen if not paused
+   - **Return early, do not proceed to Step 8**
 2. If targetSpecReplicas != effectiveReplicas: write needed
 3. If manual drift detected (observedReplicas != targetSpecReplicas != effectiveReplicas): write needed
 
-**Postconditions**: Write decision made
+**Postconditions**: Write decision made or early return if paused
 
 ### Step 8: Update Target (if needed)
 **Preconditions**: Write needed, pause==false

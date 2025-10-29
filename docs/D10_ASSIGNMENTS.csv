@@ -1,0 +1,33 @@
+EditID,File,Owner,Phase,Deadline_IST,Priority,Estimated_Minutes,Dependencies,Acceptance_Criteria,Status
+EDIT-001,docs/BRIEF.md,kyklos-orchestrator,2,2025-10-30 12:00,CRITICAL,15,ADR-0007,"Glossary has windows[].replicas, defaultReplicas, effectiveReplicas; no activeReplicas/inactiveReplicas",Pending
+EDIT-002,docs/BRIEF.md,kyklos-orchestrator,2,2025-10-30 12:00,CRITICAL,10,None,Version requirements section exists after line 3,Pending
+EDIT-003-A,docs/BRIEF.md,kyklos-orchestrator,2,2025-10-30 12:00,CRITICAL,5,ADR-0005,"Holiday non-goal line modified (if holidays IN v0.1)",Pending
+EDIT-003-B,docs/BRIEF.md,kyklos-orchestrator,2,2025-10-30 12:00,CRITICAL,0,ADR-0005,"No change needed (if holidays NOT in v0.1)",Pending
+EDIT-004,docs/api/CRD-SPEC.md,api-crd-designer,3,2025-10-30 13:00,CRITICAL,10,"ADR-0006, Phase-2","Validation rules updated: CRD enum, cross-namespace allowed",Pending
+EDIT-005,docs/api/CRD-SPEC.md,api-crd-designer,3,2025-10-30 13:00,CRITICAL,10,"ADR-0004, Phase-2","gracePeriodExpiry field documented in status section",Pending
+EDIT-006-A,docs/api/CRD-SPEC.md,api-crd-designer,3,2025-10-30 13:00,CRITICAL,5,ADR-0005,"Holiday mode default clarified (if holidays IN v0.1)",Pending
+EDIT-006-B,docs/api/CRD-SPEC.md,api-crd-designer,3,2025-10-30 13:00,CRITICAL,10,ADR-0005,"Holiday section deleted lines 66-80 (if holidays NOT in v0.1)",Pending
+EDIT-007,docs/design/RECONCILE.md,controller-reconcile-designer,4,2025-10-30 13:00,CRITICAL,10,Phase-3,All grace field references use spec.gracePeriodSeconds,Pending
+EDIT-008,docs/design/RECONCILE.md,controller-reconcile-designer,4,2025-10-30 13:00,CRITICAL,15,None,"Pause semantics expanded: status updates, early return, event emission",Pending
+EDIT-009-A,docs/design/RECONCILE.md,controller-reconcile-designer,4,2025-10-30 13:00,CRITICAL,0,ADR-0005,"No change to Step 3 (if holidays IN v0.1)",Pending
+EDIT-009-B,docs/design/RECONCILE.md,controller-reconcile-designer,4,2025-10-30 13:00,CRITICAL,20,"ADR-0005, Phase-3","Step 3 deleted, steps renumbered, preconditions updated (if holidays NOT in v0.1)",Pending
+EDIT-010,test/fixtures/dst-spring-2025.yaml,testing-strategy-designer,5,2025-10-30 13:00,CRITICAL,10,None,"File created with 2025-03-09 date, America/New_York timezone",Pending
+EDIT-011,test/fixtures/dst-fall-2025.yaml,testing-strategy-designer,5,2025-10-30 13:00,CRITICAL,10,None,"File created with 2025-11-02 date, America/New_York timezone",Pending
+EDIT-012,test/fixtures/dst-cross-midnight-2025.yaml,testing-strategy-designer,5,2025-10-30 13:00,CRITICAL,10,None,"File created with 2025-03-08/09 dates, cross-midnight window",Pending
+EDIT-013,.github/workflows/ci.yml,ci-release-designer,5,2025-10-30 14:00,CRITICAL,20,None,"Workflow file created with lint, test-unit, verify jobs",Pending
+EDIT-014,docs/LOCAL-DEV-GUIDE.md,local-workflow-designer,6,2025-10-30 18:00,HIGH,10,Phase-6,"Link to MINUTE-DEMO.md updated to ./user/MINUTE-DEMO.md",Pending
+EDIT-015,docs/MAKE-TARGETS.md,local-workflow-designer,6,2025-10-30 16:00,HIGH,20,None,"File created with all Makefile target categories documented",Pending
+EDIT-016,docs/user/CONCEPTS.md,docs-dx-designer,6,2025-10-30 17:00,HIGH,15,Phase-2,"effectiveReplicas section expanded with terminology clarification",Pending
+EDIT-017-A,docs/user/CONCEPTS.md,docs-dx-designer,6,2025-10-30 17:00,HIGH,5,ADR-0005,"Holiday note added: v0.1 ConfigMap support (if holidays IN v0.1)",Pending
+EDIT-017-B,docs/user/CONCEPTS.md,docs-dx-designer,6,2025-10-30 17:00,HIGH,5,ADR-0005,"Holiday note added: v0.2 future feature (if holidays NOT in v0.1)",Pending
+EDIT-018,README.md,docs-dx-designer,7,2025-10-31 18:00,MEDIUM,5,None,Test step added after verification step in quick start,Pending
+EDIT-019-A,examples/*.yaml,docs-dx-designer,6,2025-10-30 17:00,HIGH,15,ADR-0005,"All examples validate with kubectl dry-run (if holidays IN v0.1)",Pending
+EDIT-019-B,examples/tws-holidays-closed.yaml,docs-dx-designer,6,2025-10-30 17:00,HIGH,15,ADR-0005,"Holiday example moved to examples/future/, README created (if holidays NOT in v0.1)",Pending
+EDIT-020,docs/testing/UNIT-PLAN.md,testing-strategy-designer,7,2025-10-31 14:00,MEDIUM,20,Phase-5,"DST-1, DST-2, DST-3 scenarios added with fixture references",Pending
+EDIT-021,docs/testing/ENVTEST-PLAN.md,testing-strategy-designer,7,2025-10-31 16:00,MEDIUM,20,Phase-4,"PAUSE-1, PAUSE-2, PAUSE-3 scenarios added with expected behavior",Pending
+ADR-0005,docs/DECISIONS.md,kyklos-orchestrator,1,2025-10-30 11:00,CRITICAL,15,ADR-0005-DECISION.txt,ADR-0005 appended to DECISIONS.md with holiday scope decision,Pending
+ADR-0006,docs/DECISIONS.md,kyklos-orchestrator,1,2025-10-30 11:00,CRITICAL,10,None,ADR-0006 appended to DECISIONS.md with validation strategy,Pending
+ADR-0007,docs/DECISIONS.md,kyklos-orchestrator,1,2025-10-30 11:00,CRITICAL,10,None,ADR-0007 appended to DECISIONS.md with field naming clarification,Pending
+ADR-0002-UPDATE,docs/DECISIONS.md,kyklos-orchestrator,1,2025-10-30 11:00,CRITICAL,10,None,ADR-0002 updated with cross-namespace validation section,Pending
+ADR-0004-UPDATE,docs/DECISIONS.md,kyklos-orchestrator,1,2025-10-30 11:00,CRITICAL,10,None,ADR-0004 updated with field naming specification section,Pending
+DECISION,ADR-0005-DECISION.txt,kyklos-orchestrator,0,2025-10-30 10:30,CRITICAL,30,"All team members","Holiday scope decision documented: HOLIDAYS_IN_V01 or HOLIDAYS_NOT_IN_V01",Pending

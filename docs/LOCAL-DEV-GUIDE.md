@@ -761,7 +761,7 @@ make docs-metrics
 
 ## Next Steps
 
-- Follow [MINUTE-DEMO.md](./MINUTE-DEMO.md) for a 10-minute walkthrough
+- Follow [MINUTE-DEMO.md](./user/MINUTE-DEMO.md) for a 10-minute walkthrough
 - See [VERIFY-CHECKLIST.md](./VERIFY-CHECKLIST.md) for detailed health checks
 - Consult [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) if issues arise
 - Review [MAKE-TARGETS.md](./MAKE-TARGETS.md) for complete target reference
