@@ -6,4 +6,52 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: timewindowscaler-sample
 spec:
-  # TODO(user): Add fields here
+  # Reference to the target Deployment to scale
+  targetRef:
+    name: my-application
+    # namespace: other-namespace  # Optional, defaults to TWS namespace
+
+  # Timezone for interpreting window times (IANA timezone)
+  timezone: "America/New_York"
+
+  # Default number of replicas when no windows match
+  defaultReplicas: 2
+
+  # Grace period in seconds for scale-down operations (0-3600)
+  gracePeriodSeconds: 300  # 5 minutes
+
+  # Holiday configuration (optional)
+  holidayMode: "treat-as-closed"  # Options: ignore, treat-as-closed, treat-as-open
+  holidayConfigMap: "company-holidays"  # ConfigMap with YYYY-MM-DD keys
+
+  # Pause all scaling operations (optional)
+  pause: false
+
+  # Time windows for scaling
+  windows:
+    # Business hours - scale up during 9-5 on weekdays
+    - name: "business-hours"
+      start: "09:00"
+      end: "17:00"
+      replicas: 10
+      days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+
+    # Lunch peak - additional capacity during lunch
+    - name: "lunch-peak"
+      start: "12:00"
+      end: "14:00"
+      replicas: 15
+      days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+
+    # Night maintenance - minimal replicas overnight
+    - name: "night-maintenance"
+      start: "22:00"
+      end: "06:00"  # Cross-midnight window
+      replicas: 1
+
+    # Weekend - reduced capacity
+    - name: "weekend"
+      start: "00:00"
+      end: "23:59"
+      replicas: 3
+      days: ["Saturday", "Sunday"]

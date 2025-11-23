@@ -30,13 +30,20 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kyklosv1alpha1 "github.com/roguepikachu/kyklos/api/v1alpha1"
 	"github.com/roguepikachu/kyklos/internal/engine"
 	"github.com/roguepikachu/kyklos/internal/metrics"
 )
+
+// Finalizer for cleaning up resources
+const timeWindowScalerFinalizer = "kyklos.kyklos.io/finalizer"
 
 // TimeWindowScalerReconciler reconciles a TimeWindowScaler object
 type TimeWindowScalerReconciler struct {
@@ -79,15 +86,33 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err = r.Get(ctx, req.NamespacedName, tws); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Object not found, could have been deleted
+			logger.Info("TimeWindowScaler not found, may have been deleted", "name", req.Name, "namespace", req.Namespace)
 			err = nil // Clear error since this is not a failure
 			return ctrl.Result{}, nil
 		}
+		logger.Error(err, "Failed to get TimeWindowScaler", "name", req.Name, "namespace", req.Namespace)
 		return ctrl.Result{}, err
 	}
 
 	// Initialize clock if not set (for testing)
 	if r.Clock == nil {
 		r.Clock = engine.RealClock{}
+	}
+
+	// Check if the object is being deleted
+	if tws.ObjectMeta.DeletionTimestamp != nil {
+		return r.handleDeletion(ctx, tws)
+	}
+
+	// Add finalizer if not present
+	if !containsString(tws.ObjectMeta.Finalizers, timeWindowScalerFinalizer) {
+		tws.ObjectMeta.Finalizers = append(tws.ObjectMeta.Finalizers, timeWindowScalerFinalizer)
+		if err = r.Update(ctx, tws); err != nil {
+			logger.Error(err, "Failed to add finalizer")
+			return ctrl.Result{}, err
+		}
+		// Requeue to continue processing
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Determine target namespace
@@ -108,7 +133,18 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			// Target not found - update status and requeue
 			return r.handleMissingTarget(ctx, tws)
 		}
-		return ctrl.Result{}, err
+		logger.Error(err, "Failed to get target deployment",
+			"deployment", deploymentKey.Name,
+			"namespace", deploymentKey.Namespace)
+		// Set error condition
+		r.setErrorCondition(tws, "TargetFetchFailed",
+			fmt.Sprintf("Failed to get target deployment %s: %v", deploymentKey.Name, err))
+		if statusErr := r.Status().Update(ctx, tws); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after deployment fetch error")
+		}
+		r.Recorder.Event(tws, corev1.EventTypeWarning, "TargetFetchFailed",
+			fmt.Sprintf("Failed to get target deployment %s: %v", deploymentKey.Name, err))
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, err
 	}
 
 	// Check if paused - compute but don't apply
@@ -125,13 +161,27 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	engineInput, err = r.buildEngineInput(ctx, tws)
 	if err != nil {
 		logger.Error(err, "Failed to build engine input")
-		return ctrl.Result{}, err
+		r.setErrorCondition(tws, "InvalidConfiguration",
+			fmt.Sprintf("Failed to build engine input: %v", err))
+		if statusErr := r.Status().Update(ctx, tws); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after build input error")
+		}
+		r.Recorder.Event(tws, corev1.EventTypeWarning, "InvalidConfiguration",
+			fmt.Sprintf("Failed to build engine input: %v", err))
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 	var engineOutput engine.Output
 	engineOutput, err = engine.ComputeEffectiveReplicas(engineInput)
 	if err != nil {
 		logger.Error(err, "Failed to compute effective replicas")
-		return ctrl.Result{}, err
+		r.setErrorCondition(tws, "ComputeFailed",
+			fmt.Sprintf("Failed to compute effective replicas: %v", err))
+		if statusErr := r.Status().Update(ctx, tws); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after compute error")
+		}
+		r.Recorder.Event(tws, corev1.EventTypeWarning, "ComputeFailed",
+			fmt.Sprintf("Failed to compute effective replicas: %v", err))
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
 	// Log the decision
@@ -149,7 +199,18 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Scale if needed
 	if currentReplicas != targetReplicas && !tws.Spec.Pause {
 		if err = r.scaleDeployment(ctx, deployment, targetReplicas); err != nil {
-			return ctrl.Result{}, err
+			logger.Error(err, "Failed to scale deployment",
+				"deployment", deployment.Name,
+				"from", currentReplicas,
+				"to", targetReplicas)
+			r.setErrorCondition(tws, "ScaleFailed",
+				fmt.Sprintf("Failed to scale deployment from %d to %d: %v", currentReplicas, targetReplicas, err))
+			if statusErr := r.Status().Update(ctx, tws); statusErr != nil {
+				logger.Error(statusErr, "Failed to update status after scale error")
+			}
+			r.Recorder.Event(tws, corev1.EventTypeWarning, "ScaleFailed",
+				fmt.Sprintf("Failed to scale deployment from %d to %d: %v", currentReplicas, targetReplicas, err))
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 
 		// Emit event and track metrics
@@ -207,10 +268,21 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		if tws.Status.LastScaleTime != nil {
 			gracePeriodExpiry := tws.Status.LastScaleTime.Time.Add(time.Duration(*tws.Spec.GracePeriodSeconds) * time.Second)
 			expiryTime := metav1.NewTime(gracePeriodExpiry)
+
+			// Emit event if grace period just became active
+			if tws.Status.GracePeriodExpiry == nil {
+				r.Recorder.Event(tws, corev1.EventTypeNormal, "GracePeriodActive",
+					fmt.Sprintf("Grace period active until %s, maintaining %d replicas",
+						gracePeriodExpiry.Format(time.RFC3339), engineOutput.EffectiveReplicas))
+			}
 			tws.Status.GracePeriodExpiry = &expiryTime
 		}
 	} else {
 		// Clear grace period expiry when not in grace period
+		if tws.Status.GracePeriodExpiry != nil {
+			r.Recorder.Event(tws, corev1.EventTypeNormal, "GracePeriodEnded",
+				"Grace period has ended, normal scaling resumed")
+		}
 		tws.Status.GracePeriodExpiry = nil
 	}
 
@@ -242,8 +314,36 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 // buildEngineInput converts TWS spec to engine input
 func (r *TimeWindowScalerReconciler) buildEngineInput(ctx context.Context, tws *kyklosv1alpha1.TimeWindowScaler) (engine.Input, error) {
+	logger := log.FromContext(ctx)
+
+	// Validate and convert windows
 	windows := make([]engine.WindowSpec, len(tws.Spec.Windows))
 	for i, w := range tws.Spec.Windows {
+		// Validate time format
+		if err := r.validateTimeFormat(w.Start); err != nil {
+			errMsg := fmt.Sprintf("Window '%s' has invalid start time '%s': %v", w.Name, w.Start, err)
+			logger.Error(err, errMsg)
+			r.Recorder.Event(tws, corev1.EventTypeWarning, "InvalidWindow",
+				errMsg)
+			return engine.Input{}, fmt.Errorf("%s", errMsg)
+		}
+		if err := r.validateTimeFormat(w.End); err != nil {
+			errMsg := fmt.Sprintf("Window '%s' has invalid end time '%s': %v", w.Name, w.End, err)
+			logger.Error(err, errMsg)
+			r.Recorder.Event(tws, corev1.EventTypeWarning, "InvalidWindow",
+				errMsg)
+			return engine.Input{}, fmt.Errorf("%s", errMsg)
+		}
+
+		// Validate replicas
+		if w.Replicas < 0 {
+			errMsg := fmt.Sprintf("Window '%s' has invalid replicas %d: must be >= 0", w.Name, w.Replicas)
+			logger.Error(nil, errMsg)
+			r.Recorder.Event(tws, corev1.EventTypeWarning, "InvalidWindow",
+				errMsg)
+			return engine.Input{}, fmt.Errorf("%s", errMsg)
+		}
+
 		windows[i] = engine.WindowSpec{
 			Start:    w.Start,
 			End:      w.End,
@@ -255,13 +355,21 @@ func (r *TimeWindowScalerReconciler) buildEngineInput(ctx context.Context, tws *
 
 	// Check if today is a holiday
 	isHoliday := false
+	previousHolidayState := false // Track state changes for events
 	if tws.Spec.HolidayConfigMap != nil && *tws.Spec.HolidayConfigMap != "" {
 		holiday, err := r.checkHoliday(ctx, tws.Namespace, *tws.Spec.HolidayConfigMap, tws.Spec.Timezone)
 		if err != nil {
-			// Log error but continue - holidays are optional
+			// Log error and emit event - holidays are optional
 			log.FromContext(ctx).Error(err, "Failed to check holiday ConfigMap", "configmap", *tws.Spec.HolidayConfigMap)
+			r.Recorder.Event(tws, corev1.EventTypeWarning, "HolidayCheckFailed",
+				fmt.Sprintf("Failed to check holiday ConfigMap %s: %v", *tws.Spec.HolidayConfigMap, err))
 		} else {
 			isHoliday = holiday
+			// Emit event if holiday state changed
+			if isHoliday && !previousHolidayState {
+				r.Recorder.Event(tws, corev1.EventTypeNormal, "HolidayDetected",
+					fmt.Sprintf("Today is a holiday (mode: %s)", tws.Spec.HolidayMode))
+			}
 		}
 	}
 
@@ -418,6 +526,121 @@ func mustLoadLocation(tz string) *time.Location {
 func (r *TimeWindowScalerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kyklosv1alpha1.TimeWindowScaler{}).
+		Owns(&appsv1.Deployment{}).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(r.findTimeWindowScalersForConfigMap),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Named("timewindowscaler").
 		Complete(r)
+}
+
+// findTimeWindowScalersForConfigMap finds all TimeWindowScaler resources that reference a ConfigMap
+func (r *TimeWindowScalerReconciler) findTimeWindowScalersForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
+	cm := obj.(*corev1.ConfigMap)
+	logger := log.FromContext(ctx)
+
+	// List all TimeWindowScalers in the same namespace
+	twsList := &kyklosv1alpha1.TimeWindowScalerList{}
+	if err := r.List(ctx, twsList, client.InNamespace(cm.Namespace)); err != nil {
+		logger.Error(err, "Failed to list TimeWindowScalers for ConfigMap change", "configmap", cm.Name)
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, tws := range twsList.Items {
+		// Check if this TWS references the ConfigMap
+		if tws.Spec.HolidayConfigMap != nil && *tws.Spec.HolidayConfigMap == cm.Name {
+			logger.Info("ConfigMap changed, triggering reconciliation",
+				"configmap", cm.Name,
+				"timewindowscaler", tws.Name)
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      tws.Name,
+					Namespace: tws.Namespace,
+				},
+			})
+		}
+	}
+
+	return requests
+}
+
+// handleDeletion handles the cleanup when a TimeWindowScaler is being deleted
+func (r *TimeWindowScalerReconciler) handleDeletion(ctx context.Context, tws *kyklosv1alpha1.TimeWindowScaler) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if containsString(tws.ObjectMeta.Finalizers, timeWindowScalerFinalizer) {
+		// Perform cleanup
+		logger.Info("Performing cleanup for TimeWindowScaler",
+			"name", tws.Name,
+			"namespace", tws.Namespace)
+
+		// Clean up metrics
+		metrics.ScaleOperationsTotal.DeleteLabelValues(tws.Namespace, tws.Name)
+		metrics.EffectiveReplicas.DeleteLabelValues(tws.Namespace, tws.Name)
+		metrics.WindowTransitionsTotal.DeleteLabelValues(tws.Namespace, tws.Name)
+		metrics.ReconcileDurationSeconds.DeleteLabelValues(tws.Namespace, tws.Name)
+
+		// Emit deletion event
+		r.Recorder.Event(tws, corev1.EventTypeNormal, "Deleting",
+			"TimeWindowScaler is being deleted, cleaning up resources")
+
+		// Remove finalizer
+		tws.ObjectMeta.Finalizers = removeString(tws.ObjectMeta.Finalizers, timeWindowScalerFinalizer)
+		if err := r.Update(ctx, tws); err != nil {
+			logger.Error(err, "Failed to remove finalizer")
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Successfully cleaned up TimeWindowScaler",
+			"name", tws.Name,
+			"namespace", tws.Namespace)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// setErrorCondition sets an error condition on the TimeWindowScaler
+func (r *TimeWindowScalerReconciler) setErrorCondition(tws *kyklosv1alpha1.TimeWindowScaler, reason, message string) {
+	errorCondition := metav1.Condition{
+		Type:               "Ready",
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: tws.Generation,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+	meta.SetStatusCondition(&tws.Status.Conditions, errorCondition)
+}
+
+// containsString checks if a string slice contains a string
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// removeString removes a string from a string slice
+func removeString(slice []string, s string) []string {
+	var result []string
+	for _, item := range slice {
+		if item != s {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// validateTimeFormat validates HH:MM time format
+func (r *TimeWindowScalerReconciler) validateTimeFormat(timeStr string) error {
+	_, err := time.Parse("15:04", timeStr)
+	if err != nil {
+		return fmt.Errorf("invalid time format (expected HH:MM): %w", err)
+	}
+	return nil
 }

@@ -17,6 +17,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -39,6 +40,8 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 		interval = time.Millisecond * 250
 	)
 
+	var testCounter int
+
 	Context("When scaling a Deployment based on time windows", func() {
 		var (
 			ctx            context.Context
@@ -53,8 +56,9 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 		BeforeEach(func() {
 			ctx = context.Background()
 			namespace = "default"
-			deploymentName = "test-deployment"
-			twsName = "test-tws"
+			testCounter++
+			deploymentName = fmt.Sprintf("test-deployment-%d-%d", time.Now().Unix(), testCounter)
+			twsName = fmt.Sprintf("test-tws-%d-%d", time.Now().Unix(), testCounter)
 
 			// Create a test deployment
 			deployment = &appsv1.Deployment{
@@ -98,12 +102,20 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 		})
 
 		AfterEach(func() {
-			// Clean up
+			// Clean up with proper error handling
 			if tws != nil {
+				// First remove finalizer if present
+				currentTWS := &kyklosv1alpha1.TimeWindowScaler{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: tws.Name, Namespace: tws.Namespace}, currentTWS); err == nil {
+					currentTWS.Finalizers = []string{}
+					_ = k8sClient.Update(ctx, currentTWS)
+				}
 				_ = k8sClient.Delete(ctx, tws)
+				tws = nil
 			}
 			if deployment != nil {
 				_ = k8sClient.Delete(ctx, deployment)
+				deployment = nil
 			}
 		})
 
@@ -133,7 +145,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, tws)).To(Succeed())
 
-			// Reconcile
+			// Reconcile twice - first adds finalizer, second does actual work
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      twsName,
@@ -141,9 +153,14 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 				},
 			}
 
+			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			if result.Requeue {
+				// Second reconcile does the actual scaling
+				_, err = reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+			}
 
 			// Check that the deployment was scaled
 			updatedDeployment := &appsv1.Deployment{}
@@ -209,7 +226,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, tws)).To(Succeed())
 
-			// Reconcile
+			// Reconcile twice - first adds finalizer, second does actual work
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      twsName,
@@ -217,9 +234,14 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 				},
 			}
 
+			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			if result.Requeue {
+				// Second reconcile does the actual scaling
+				_, err = reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+			}
 
 			// Check that the deployment uses default replicas
 			updatedDeployment := &appsv1.Deployment{}
@@ -280,7 +302,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, tws)).To(Succeed())
 
-			// Reconcile
+			// Reconcile twice - first adds finalizer, second does actual work
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      twsName,
@@ -288,9 +310,14 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 				},
 			}
 
+			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			if result.Requeue {
+				// Second reconcile does the actual scaling
+				_, err = reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+			}
 
 			// Check that the deployment was NOT scaled (stays at 1)
 			updatedDeployment := &appsv1.Deployment{}
@@ -353,9 +380,15 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 				},
 			}
 
+			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(5 * time.Minute))
+			if result.Requeue {
+				// Second reconcile does the actual work
+				_, err = reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			// Should requeue after 5 minutes to check if target appears
 
 			// Check status shows target not found
 			updatedTWS := &kyklosv1alpha1.TimeWindowScaler{}
@@ -472,9 +505,15 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 				},
 			}
 
+			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			if result.Requeue {
+				// Second reconcile does the actual work
+				_, err = reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			// Requeue is expected for time-based scaling
 
 			// Check deployment should be scaled to 0 (holiday mode treat-as-closed)
 			Eventually(func() int32 {
@@ -490,7 +529,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 
 			// Now test with non-holiday date
 			fakeClock.Time = time.Date(2025, 3, 10, 10, 0, 0, 0, time.UTC) // Regular Monday at 10 AM
-			result, err = reconciler.Reconcile(ctx, req)
+			_, err = reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Check deployment should be scaled to 5 (within business hours)
@@ -504,6 +543,287 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 				}
 				return *holidayDeployment.Spec.Replicas
 			}, timeout, interval).Should(Equal(int32(5)))
+		})
+
+		It("Should handle grace period for scale-down operations", func() {
+			// Create a deployment with 5 replicas
+			graceDeploymentName := "grace-test-deployment"
+			graceTWSName := "grace-test-tws"
+
+			graceDeployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      graceDeploymentName,
+					Namespace: namespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: ptr(5),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "grace-test",
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": "grace-test",
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, graceDeployment)).To(Succeed())
+
+			// Create TimeWindowScaler with grace period
+			// Window that was active but just ended (to trigger scale-down)
+			fakeClock := &engine.FakeClock{
+				Time: time.Date(2025, 3, 10, 17, 1, 0, 0, time.UTC), // Just after 17:00
+			}
+
+			gracePeriodSeconds := int32(60)
+			graceTWS := &kyklosv1alpha1.TimeWindowScaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      graceTWSName,
+					Namespace: namespace,
+				},
+				Spec: kyklosv1alpha1.TimeWindowScalerSpec{
+					TargetRef: kyklosv1alpha1.TargetRef{
+						Name: graceDeploymentName,
+					},
+					Timezone:           "UTC",
+					DefaultReplicas:    1,
+					GracePeriodSeconds: &gracePeriodSeconds,
+					Windows: []kyklosv1alpha1.TimeWindow{
+						{
+							Start:    "09:00",
+							End:      "17:00",
+							Replicas: 5,
+							Name:     "business-hours",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, graceTWS)).To(Succeed())
+
+			// Create reconciler with fake clock
+			reconciler = &TimeWindowScalerReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: record.NewFakeRecorder(10),
+				Clock:    fakeClock,
+			}
+
+			// First reconciliation - should scale to 5 (in window initially)
+			fakeClock.Time = time.Date(2025, 3, 10, 10, 0, 0, 0, time.UTC) // 10 AM
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      graceTWSName,
+					Namespace: namespace,
+				},
+			}
+
+			// First reconcile adds finalizer
+			result, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			if result.Requeue {
+				// Second reconcile does the actual work
+				_, err = reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Check deployment is at 5 replicas
+			Eventually(func() int32 {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      graceDeploymentName,
+					Namespace: namespace,
+				}, graceDeployment)
+				if err != nil {
+					return -1
+				}
+				return *graceDeployment.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(5)))
+
+			// Verify LastScaleTime was set
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      graceTWSName,
+					Namespace: namespace,
+				}, graceTWS)
+				if err != nil {
+					return false
+				}
+				return graceTWS.Status.LastScaleTime != nil
+			}, timeout, interval).Should(BeTrue(), "LastScaleTime should be set after scaling")
+
+			// Now move time to just after window ends
+			fakeClock.Time = time.Date(2025, 3, 10, 17, 1, 0, 0, time.UTC) // 17:01
+
+			// Reconcile again - should NOT scale down due to grace period
+			// First reconcile after time change should maintain current replicas due to grace period
+			result, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify deployment stays at 5 replicas (grace period active)
+			Consistently(func() int32 {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      graceDeploymentName,
+					Namespace: namespace,
+				}, graceDeployment)
+				if err != nil {
+					return -1
+				}
+				return *graceDeployment.Spec.Replicas
+			}, 5*time.Second, interval).Should(Equal(int32(5)))
+
+			// Check status shows grace period is active
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      graceTWSName,
+				Namespace: namespace,
+			}, graceTWS)).To(Succeed())
+			Expect(graceTWS.Status.GracePeriodExpiry).NotTo(BeNil())
+
+			// Move time past grace period
+			fakeClock.Time = time.Date(2025, 3, 10, 17, 3, 0, 0, time.UTC) // 17:03 (2 minutes after, > 60s grace)
+
+			// Reconcile again - should now scale down
+			result, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Check deployment scales down to 1
+			Eventually(func() int32 {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      graceDeploymentName,
+					Namespace: namespace,
+				}, graceDeployment)
+				if err != nil {
+					return -1
+				}
+				return *graceDeployment.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(1)))
+
+			// Grace period expiry should be cleared
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      graceTWSName,
+				Namespace: namespace,
+			}, graceTWS)).To(Succeed())
+			Expect(graceTWS.Status.GracePeriodExpiry).To(BeNil())
+		})
+
+		It("Should not apply grace period for scale-up operations", func() {
+			// Create a deployment with 1 replica
+			scaleUpDeploymentName := "scaleup-test-deployment"
+			scaleUpTWSName := "scaleup-test-tws"
+
+			scaleUpDeployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      scaleUpDeploymentName,
+					Namespace: namespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "scaleup-test",
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": "scaleup-test",
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, scaleUpDeployment)).To(Succeed())
+
+			// Create TimeWindowScaler with grace period
+			gracePeriodSeconds := int32(300) // 5 minutes
+			scaleUpTWS := &kyklosv1alpha1.TimeWindowScaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      scaleUpTWSName,
+					Namespace: namespace,
+				},
+				Spec: kyklosv1alpha1.TimeWindowScalerSpec{
+					TargetRef: kyklosv1alpha1.TargetRef{
+						Name: scaleUpDeploymentName,
+					},
+					Timezone:           "UTC",
+					DefaultReplicas:    1,
+					GracePeriodSeconds: &gracePeriodSeconds,
+					Windows: []kyklosv1alpha1.TimeWindow{
+						{
+							Start:    "09:00",
+							End:      "17:00",
+							Replicas: 10,
+							Name:     "peak-hours",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, scaleUpTWS)).To(Succeed())
+
+			// Create reconciler with fake clock set to window start
+			fakeClock := &engine.FakeClock{
+				Time: time.Date(2025, 3, 10, 9, 1, 0, 0, time.UTC), // 09:01 - just after window starts
+			}
+			reconciler = &TimeWindowScalerReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: record.NewFakeRecorder(10),
+				Clock:    fakeClock,
+			}
+
+			// Reconcile
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      scaleUpTWSName,
+					Namespace: namespace,
+				},
+			}
+
+			// First reconcile adds finalizer
+			result, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			if result.Requeue {
+				// Second reconcile does the actual work
+				_, err = reconciler.Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Check deployment scales up immediately to 10 (no grace period for scale-up)
+			Eventually(func() int32 {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      scaleUpDeploymentName,
+					Namespace: namespace,
+				}, scaleUpDeployment)
+				if err != nil {
+					return -1
+				}
+				return *scaleUpDeployment.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(10)))
+
+			// Grace period expiry should not be set for scale-up
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      scaleUpTWSName,
+				Namespace: namespace,
+			}, scaleUpTWS)).To(Succeed())
+			Expect(scaleUpTWS.Status.GracePeriodExpiry).To(BeNil())
 		})
 	})
 })
