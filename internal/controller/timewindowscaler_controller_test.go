@@ -156,7 +156,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			if result.Requeue {
+			if result.Requeue || result.RequeueAfter > 0 {
 				// Second reconcile does the actual scaling
 				_, err = reconciler.Reconcile(ctx, req)
 				Expect(err).NotTo(HaveOccurred())
@@ -237,7 +237,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			if result.Requeue {
+			if result.Requeue || result.RequeueAfter > 0 {
 				// Second reconcile does the actual scaling
 				_, err = reconciler.Reconcile(ctx, req)
 				Expect(err).NotTo(HaveOccurred())
@@ -313,7 +313,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			if result.Requeue {
+			if result.Requeue || result.RequeueAfter > 0 {
 				// Second reconcile does the actual scaling
 				_, err = reconciler.Reconcile(ctx, req)
 				Expect(err).NotTo(HaveOccurred())
@@ -383,7 +383,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			if result.Requeue {
+			if result.Requeue || result.RequeueAfter > 0 {
 				// Second reconcile does the actual work
 				_, err = reconciler.Reconcile(ctx, req)
 				Expect(err).NotTo(HaveOccurred())
@@ -508,7 +508,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			if result.Requeue {
+			if result.Requeue || result.RequeueAfter > 0 {
 				// Second reconcile does the actual work
 				_, err = reconciler.Reconcile(ctx, req)
 				Expect(err).NotTo(HaveOccurred())
@@ -632,7 +632,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			if result.Requeue {
+			if result.Requeue || result.RequeueAfter > 0 {
 				// Second reconcile does the actual work
 				_, err = reconciler.Reconcile(ctx, req)
 				Expect(err).NotTo(HaveOccurred())
@@ -800,7 +800,7 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 			// First reconcile adds finalizer
 			result, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			if result.Requeue {
+			if result.Requeue || result.RequeueAfter > 0 {
 				// Second reconcile does the actual work
 				_, err = reconciler.Reconcile(ctx, req)
 				Expect(err).NotTo(HaveOccurred())

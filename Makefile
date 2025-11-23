@@ -239,6 +239,33 @@ endef
 
 ##@ Kyklos Custom Targets
 
+.PHONY: install-tools
+install-tools: kustomize controller-gen envtest golangci-lint ## Install all required development tools
+	@echo "All development tools installed successfully in $(LOCALBIN)"
+	@echo "  - kustomize: $(KUSTOMIZE_VERSION)"
+	@echo "  - controller-gen: $(CONTROLLER_TOOLS_VERSION)"
+	@echo "  - setup-envtest: $(ENVTEST_VERSION)"
+	@echo "  - golangci-lint: $(GOLANGCI_LINT_VERSION)"
+
+.PHONY: install-envtest
+install-envtest: setup-envtest ## Install envtest Kubernetes binaries
+	@echo "envtest binaries installed for Kubernetes $(ENVTEST_K8S_VERSION)"
+
+.PHONY: verify-tools
+verify-tools: ## Verify all required tools are installed
+	@echo "Verifying required tools..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ Go is not installed"; exit 1; }
+	@echo "✅ Go $$(go version | awk '{print $$3}')"
+	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "❌ $(CONTAINER_TOOL) is not installed"; exit 1; }
+	@echo "✅ $(CONTAINER_TOOL) $$($(CONTAINER_TOOL) --version | head -n1)"
+	@command -v kubectl >/dev/null 2>&1 || { echo "❌ kubectl is not installed"; exit 1; }
+	@echo "✅ kubectl $$(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+	@command -v kind >/dev/null 2>&1 || { echo "⚠️  kind is not installed (optional for local clusters)"; }
+	@command -v kind >/dev/null 2>&1 && echo "✅ kind $$(kind version)" || true
+	@echo ""
+	@echo "All required tools are installed!"
+	@echo "Run 'make install-tools' to install additional development tools."
+
 .PHONY: install-crds
 install-crds: manifests kustomize ## Install CRDs into cluster
 	$(KUSTOMIZE) build config/crd | kubectl apply -f -
@@ -250,3 +277,13 @@ test-engine: ## Run engine tests only
 .PHONY: test-controller
 test-controller: manifests generate fmt vet setup-envtest ## Run controller envtests
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./internal/controller/... -v
+
+.PHONY: smoke-test
+smoke-test: ## Run quick smoke test (30 seconds) - requires live cluster
+	@echo "Running Kyklos smoke test..."
+	@./test/sanity/smoke-test.sh
+
+.PHONY: sanity-test
+sanity-test: ## Run full sanity test (3 minutes) - requires live cluster
+	@echo "Running Kyklos sanity test..."
+	@./test/sanity/run-sanity-test.sh
