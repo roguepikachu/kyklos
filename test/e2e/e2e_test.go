@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -259,14 +260,266 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		It("should scale deployment based on time windows", func() {
+			By("creating a test deployment")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			deploymentYAML := fmt.Sprintf(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+  namespace: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test
+  template:
+    metadata:
+      labels:
+        app: test
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          runAsNonRoot: true
+          runAsUser: 1000
+`, namespace)
+			cmd.Stdin = strings.NewReader(deploymentYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a TimeWindowScaler with active window")
+			now := time.Now().UTC()
+			startTime := now.Add(-1 * time.Hour).Format("15:04")
+			endTime := now.Add(1 * time.Hour).Format("15:04")
+
+			twsYAML := fmt.Sprintf(`
+apiVersion: kyklos.kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: test-tws
+  namespace: %s
+spec:
+  targetRef:
+    name: test-deployment
+  timezone: UTC
+  defaultReplicas: 1
+  windows:
+  - name: active-window
+    start: "%s"
+    end: "%s"
+    replicas: 5
+`, namespace, startTime, endTime)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(twsYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the deployment is scaled to 5 replicas")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "test-deployment",
+					"-n", namespace, "-o", "jsonpath={.spec.replicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("5"))
+			}, 30*time.Second).Should(Succeed())
+
+			By("verifying the TimeWindowScaler status")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "timewindowscaler", "test-tws",
+					"-n", namespace, "-o", "jsonpath={.status.currentWindow}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("active-window"))
+			}, 10*time.Second).Should(Succeed())
+
+			By("verifying metrics are updated")
+			metricsOutput := getMetricsOutput()
+			Expect(metricsOutput).To(ContainSubstring("kyklos_effective_replicas"))
+			Expect(metricsOutput).To(ContainSubstring("kyklos_scale_operations_total"))
+		})
+
+		It("should respect grace period for scale-down", func() {
+			By("creating a deployment with 5 replicas")
+			deploymentYAML := fmt.Sprintf(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grace-deployment
+  namespace: %s
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: grace
+  template:
+    metadata:
+      labels:
+        app: grace
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          runAsNonRoot: true
+          runAsUser: 1000
+`, namespace)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(deploymentYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating TimeWindowScaler with grace period and expired window")
+			now := time.Now().UTC()
+			startTime := now.Add(-2 * time.Hour).Format("15:04")
+			endTime := now.Add(-1 * time.Minute).Format("15:04")
+
+			twsYAML := fmt.Sprintf(`
+apiVersion: kyklos.kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: grace-tws
+  namespace: %s
+spec:
+  targetRef:
+    name: grace-deployment
+  timezone: UTC
+  defaultReplicas: 1
+  gracePeriodSeconds: 30
+  windows:
+  - name: past-window
+    start: "%s"
+    end: "%s"
+    replicas: 5
+`, namespace, startTime, endTime)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(twsYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying deployment stays at 5 replicas during grace period")
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "grace-deployment",
+					"-n", namespace, "-o", "jsonpath={.spec.replicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("5"))
+			}, 20*time.Second, 2*time.Second).Should(Succeed())
+
+			By("verifying deployment scales down after grace period")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "grace-deployment",
+					"-n", namespace, "-o", "jsonpath={.spec.replicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("1"))
+			}, 60*time.Second, 5*time.Second).Should(Succeed())
+		})
+
+		It("should handle holiday mode correctly", func() {
+			By("creating a holiday ConfigMap")
+			today := time.Now().UTC().Format("2006-01-02")
+			holidayYAML := fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: holidays
+  namespace: %s
+data:
+  "%s": "Test Holiday"
+`, namespace, today)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(holidayYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a deployment")
+			deploymentYAML := fmt.Sprintf(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holiday-deployment
+  namespace: %s
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: holiday
+  template:
+    metadata:
+      labels:
+        app: holiday
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          runAsNonRoot: true
+          runAsUser: 1000
+`, namespace)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(deploymentYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating TimeWindowScaler with holiday mode treat-as-closed")
+			now := time.Now().UTC()
+			startTime := now.Add(-1 * time.Hour).Format("15:04")
+			endTime := now.Add(1 * time.Hour).Format("15:04")
+
+			twsYAML := fmt.Sprintf(`
+apiVersion: kyklos.kyklos.io/v1alpha1
+kind: TimeWindowScaler
+metadata:
+  name: holiday-tws
+  namespace: %s
+spec:
+  targetRef:
+    name: holiday-deployment
+  timezone: UTC
+  defaultReplicas: 1
+  holidayMode: treat-as-closed
+  holidayConfigMap: holidays
+  windows:
+  - name: business-hours
+    start: "%s"
+    end: "%s"
+    replicas: 10
+`, namespace, startTime, endTime)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(twsYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying deployment scales to 0 (holiday treat-as-closed)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "holiday-deployment",
+					"-n", namespace, "-o", "jsonpath={.spec.replicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("0"))
+			}, 30*time.Second).Should(Succeed())
+		})
 	})
 })
 

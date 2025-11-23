@@ -65,7 +65,7 @@ Indicates configuration or operational problems. `True` for invalid timezones, m
 ## Scaling Behavior
 
 ### Grace Period
-An optional delay before downscaling. Configured via `spec.gracePeriodSeconds`. Only applies when reducing replicas. Useful for connection draining or workload completion.
+An optional delay before downscaling. Configured via `spec.gracePeriodSeconds`. Only applies when reducing replicas (not scale-up). During the grace period, the controller maintains current replicas but shows "grace-period-active" reason in status. The next boundary is set to LastScaleTime + gracePeriodSeconds. Maximum allowed: 3600 seconds (1 hour). Useful for connection draining or workload completion.
 
 ### Pause
 A mode where Kyklos computes the desired state and updates status but does not modify the target deployment. Set via `spec.pause: true`. Used for manual overrides or testing configurations.

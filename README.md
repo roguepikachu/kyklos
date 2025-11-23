@@ -203,17 +203,17 @@ spec:
 This is an alpha release focused on Deployment scaling with time windows. See [ROADMAP.md](docs/ROADMAP.md) for future features.
 
 **Current Implementation Status**:
-- ✅ Core time window engine (83.8% test coverage)
-- ✅ Basic controller with scaling logic
+- ✅ Core time window engine (88.4% test coverage)
+- ✅ Full controller with reconciliation logic
 - ✅ Status updates and events
 - ✅ Pause mode
 - ✅ Holiday modes (via ConfigMap)
 - ✅ Cross-midnight windows
 - ✅ DST handling
 - ✅ Manual drift correction
-- 🚧 Grace periods (structure in place, timing logic pending)
-- 🚧 Metrics and observability
-- 🚧 Admission webhooks
+- ✅ Grace periods with timing logic
+- ✅ Prometheus metrics (4 metrics exported)
+- 🚧 Admission webhooks (deferred to v0.2)
 
 **Current Features**:
 - Time window matching with inclusive start, exclusive end
@@ -234,7 +234,7 @@ This is an alpha release focused on Deployment scaling with time windows. See [R
 ### Running Tests
 
 ```bash
-# Run pure engine tests (83.8% coverage)
+# Run pure engine tests (88.4% coverage)
 make test-engine
 
 # Run all tests
@@ -322,11 +322,12 @@ We welcome contributions! Please see our [Contributing Guide](docs/implementatio
 See [docs/BRIEF.md](docs/BRIEF.md) for project organization and [docs/RACI.md](docs/RACI.md) for responsibilities.
 
 This project is in active development. Key areas where we need help:
-- Grace period timing implementation
-- Metrics and Prometheus integration
-- Additional timezone testing
-- Documentation improvements
+- Admission webhook implementation
+- StatefulSet and DaemonSet support
+- Additional timezone testing across edge cases
+- Documentation improvements and tutorials
 - Example configurations for common use cases
+- Performance testing at scale
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 

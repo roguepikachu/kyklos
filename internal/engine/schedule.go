@@ -34,22 +34,22 @@ type Window struct {
 
 // Input contains the input for computing effective replicas
 type Input struct {
-	Now              time.Time
-	Timezone         string
-	Windows          []WindowSpec
-	DefaultReplicas  int32
-	HolidayMode      string
-	IsHoliday        bool
-	Pause            bool
-	GracePeriodSecs  int32
-	LastScaleTime    *time.Time
-	CurrentReplicas  int32
+	Now             time.Time
+	Timezone        string
+	Windows         []WindowSpec
+	DefaultReplicas int32
+	HolidayMode     string
+	IsHoliday       bool
+	Pause           bool
+	GracePeriodSecs int32
+	LastScaleTime   *time.Time
+	CurrentReplicas int32
 }
 
 // WindowSpec is a window specification from the API
 type WindowSpec struct {
-	Start    string   // HH:MM format
-	End      string   // HH:MM format
+	Start    string // HH:MM format
+	End      string // HH:MM format
 	Replicas int32
 	Name     string
 	Days     []string // Optional: ["Monday", "Tuesday"]
@@ -148,7 +148,11 @@ func computeWithoutPause(input Input, nowLocal time.Time, loc *time.Location) Ou
 		}
 	}
 
-	// Determine effective replicas and window name
+	// Determine the target replicas based on windows
+	var targetReplicas int32
+	var targetWindow string
+	var targetReason string
+
 	if activeWindow != nil {
 		windowName := activeWindow.Name
 		if windowName == "" {
@@ -156,20 +160,38 @@ func computeWithoutPause(input Input, nowLocal time.Time, loc *time.Location) Ou
 				activeWindow.Start.Format("15:04"),
 				activeWindow.End.Format("15:04"))
 		}
-		return Output{
-			EffectiveReplicas: activeWindow.Replicas,
-			NextBoundary:      nextBoundary,
-			CurrentWindow:     windowName,
-			Reason:            "in-window",
+		targetReplicas = activeWindow.Replicas
+		targetWindow = windowName
+		targetReason = "in-window"
+	} else {
+		targetReplicas = input.DefaultReplicas
+		targetWindow = "Default"
+		targetReason = "no-matching-window"
+	}
+
+	// Check if grace period applies (only for scale-down operations)
+	if input.CurrentReplicas > 0 && targetReplicas < input.CurrentReplicas {
+		// This is a scale-down operation - check grace period
+		if input.GracePeriodSecs > 0 && input.LastScaleTime != nil {
+			gracePeriodExpiry := input.LastScaleTime.Add(time.Duration(input.GracePeriodSecs) * time.Second)
+			if nowLocal.Before(gracePeriodExpiry) {
+				// Still within grace period - maintain current replicas
+				return Output{
+					EffectiveReplicas: input.CurrentReplicas,
+					NextBoundary:      gracePeriodExpiry, // Next boundary is when grace period expires
+					CurrentWindow:     "grace-period",
+					Reason:            "grace-period-active",
+				}
+			}
 		}
 	}
 
-	// No matching window - use default
+	// Return the computed target
 	return Output{
-		EffectiveReplicas: input.DefaultReplicas,
+		EffectiveReplicas: targetReplicas,
 		NextBoundary:      nextBoundary,
-		CurrentWindow:     "Default",
-		Reason:            "no-matching-window",
+		CurrentWindow:     targetWindow,
+		Reason:            targetReason,
 	}
 }
 
@@ -248,7 +270,7 @@ func isInWindow(now time.Time, window *Window) bool {
 		// This is a cross-midnight window
 		// Check if we're in the late-night part (after start, before midnight)
 		if now.Day() == window.Start.Day() &&
-		   (now.Equal(window.Start) || now.After(window.Start)) {
+			(now.Equal(window.Start) || now.After(window.Start)) {
 			return true
 		}
 		// Check if we're in the early-morning part (after midnight, before end)

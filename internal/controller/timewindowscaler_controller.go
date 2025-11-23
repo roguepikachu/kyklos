@@ -35,6 +35,7 @@ import (
 
 	kyklosv1alpha1 "github.com/roguepikachu/kyklos/api/v1alpha1"
 	"github.com/roguepikachu/kyklos/internal/engine"
+	"github.com/roguepikachu/kyklos/internal/metrics"
 )
 
 // TimeWindowScalerReconciler reconciles a TimeWindowScaler object
@@ -51,17 +52,34 @@ type TimeWindowScalerReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments/scale,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	logger := log.FromContext(ctx)
+
+	// Track reconciliation duration
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+		metrics.ReconcileDurationSeconds.WithLabelValues(
+			req.Namespace,
+			req.Name,
+			status,
+		).Observe(duration)
+	}()
 
 	// Fetch the TimeWindowScaler instance
 	tws := &kyklosv1alpha1.TimeWindowScaler{}
-	if err := r.Get(ctx, req.NamespacedName, tws); err != nil {
+	if err = r.Get(ctx, req.NamespacedName, tws); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Object not found, could have been deleted
+			err = nil // Clear error since this is not a failure
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -85,7 +103,7 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Namespace: targetNamespace,
 	}
 
-	if err := r.Get(ctx, deploymentKey, deployment); err != nil {
+	if err = r.Get(ctx, deploymentKey, deployment); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Target not found - update status and requeue
 			return r.handleMissingTarget(ctx, tws)
@@ -103,8 +121,14 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Compute effective replicas using the engine
-	engineInput := r.buildEngineInput(tws)
-	engineOutput, err := engine.ComputeEffectiveReplicas(engineInput)
+	var engineInput engine.Input
+	engineInput, err = r.buildEngineInput(ctx, tws)
+	if err != nil {
+		logger.Error(err, "Failed to build engine input")
+		return ctrl.Result{}, err
+	}
+	var engineOutput engine.Output
+	engineOutput, err = engine.ComputeEffectiveReplicas(engineInput)
 	if err != nil {
 		logger.Error(err, "Failed to compute effective replicas")
 		return ctrl.Result{}, err
@@ -124,18 +148,49 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Scale if needed
 	if currentReplicas != targetReplicas && !tws.Spec.Pause {
-		if err := r.scaleDeployment(ctx, deployment, targetReplicas); err != nil {
+		if err = r.scaleDeployment(ctx, deployment, targetReplicas); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		// Emit event
+		// Emit event and track metrics
+		direction := "up"
 		eventType := "ScaledUp"
 		if targetReplicas < currentReplicas {
 			eventType = "ScaledDown"
+			direction = "down"
 		}
 		r.Recorder.Event(tws, corev1.EventTypeNormal, eventType,
 			fmt.Sprintf("Scaled from %d to %d replicas (window: %s)",
 				currentReplicas, targetReplicas, engineOutput.CurrentWindow))
+
+		// Track scale operation metric
+		metrics.ScaleOperationsTotal.WithLabelValues(
+			tws.Namespace,
+			tws.Name,
+			direction,
+			engineOutput.CurrentWindow,
+		).Inc()
+
+		// Update LastScaleTime when we actually scale
+		tws.Status.LastScaleTime = &metav1.Time{Time: r.Clock.Now()}
+	}
+
+	// Update effective replicas gauge
+	metrics.EffectiveReplicas.WithLabelValues(
+		tws.Namespace,
+		tws.Name,
+		engineOutput.CurrentWindow,
+	).Set(float64(targetReplicas))
+
+	// Track window transitions
+	previousWindow := tws.Status.CurrentWindow
+	if previousWindow != "" && previousWindow != engineOutput.CurrentWindow {
+		metrics.WindowTransitionsTotal.WithLabelValues(
+			tws.Namespace,
+			tws.Name,
+			previousWindow,
+			engineOutput.CurrentWindow,
+		).Inc()
 	}
 
 	// Update status
@@ -146,8 +201,17 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	nextBoundaryTime := metav1.NewTime(engineOutput.NextBoundary)
 	tws.Status.NextBoundary = &nextBoundaryTime
 
-	if currentReplicas == targetReplicas || tws.Spec.Pause {
-		tws.Status.LastScaleTime = &metav1.Time{Time: r.Clock.Now()}
+	// Handle grace period expiry tracking
+	if engineOutput.Reason == "grace-period-active" && tws.Spec.GracePeriodSeconds != nil {
+		// Calculate and store grace period expiry time
+		if tws.Status.LastScaleTime != nil {
+			gracePeriodExpiry := tws.Status.LastScaleTime.Time.Add(time.Duration(*tws.Spec.GracePeriodSeconds) * time.Second)
+			expiryTime := metav1.NewTime(gracePeriodExpiry)
+			tws.Status.GracePeriodExpiry = &expiryTime
+		}
+	} else {
+		// Clear grace period expiry when not in grace period
+		tws.Status.GracePeriodExpiry = nil
 	}
 
 	// Set Ready condition
@@ -163,7 +227,7 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	meta.SetStatusCondition(&tws.Status.Conditions, readyCondition)
 
 	// Update the status
-	if err := r.Status().Update(ctx, tws); err != nil {
+	if err = r.Status().Update(ctx, tws); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -177,7 +241,7 @@ func (r *TimeWindowScalerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 }
 
 // buildEngineInput converts TWS spec to engine input
-func (r *TimeWindowScalerReconciler) buildEngineInput(tws *kyklosv1alpha1.TimeWindowScaler) engine.Input {
+func (r *TimeWindowScalerReconciler) buildEngineInput(ctx context.Context, tws *kyklosv1alpha1.TimeWindowScaler) (engine.Input, error) {
 	windows := make([]engine.WindowSpec, len(tws.Spec.Windows))
 	for i, w := range tws.Spec.Windows {
 		windows[i] = engine.WindowSpec{
@@ -189,13 +253,25 @@ func (r *TimeWindowScalerReconciler) buildEngineInput(tws *kyklosv1alpha1.TimeWi
 		}
 	}
 
+	// Check if today is a holiday
+	isHoliday := false
+	if tws.Spec.HolidayConfigMap != nil && *tws.Spec.HolidayConfigMap != "" {
+		holiday, err := r.checkHoliday(ctx, tws.Namespace, *tws.Spec.HolidayConfigMap, tws.Spec.Timezone)
+		if err != nil {
+			// Log error but continue - holidays are optional
+			log.FromContext(ctx).Error(err, "Failed to check holiday ConfigMap", "configmap", *tws.Spec.HolidayConfigMap)
+		} else {
+			isHoliday = holiday
+		}
+	}
+
 	input := engine.Input{
 		Now:             r.Clock.Now(),
 		Timezone:        tws.Spec.Timezone,
 		Windows:         windows,
 		DefaultReplicas: tws.Spec.DefaultReplicas,
 		HolidayMode:     tws.Spec.HolidayMode,
-		IsHoliday:       false, // TODO: check holiday ConfigMap
+		IsHoliday:       isHoliday,
 		Pause:           tws.Spec.Pause,
 	}
 
@@ -211,7 +287,43 @@ func (r *TimeWindowScalerReconciler) buildEngineInput(tws *kyklosv1alpha1.TimeWi
 		input.CurrentReplicas = *tws.Status.TargetObservedReplicas
 	}
 
-	return input
+	return input, nil
+}
+
+// checkHoliday checks if today is a holiday in the ConfigMap
+func (r *TimeWindowScalerReconciler) checkHoliday(ctx context.Context, namespace, configMapName, timezone string) (bool, error) {
+	// Load timezone
+	var err error
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return false, fmt.Errorf("invalid timezone %s: %w", timezone, err)
+	}
+
+	// Get current date in the specified timezone
+	now := r.Clock.Now().In(loc)
+	todayKey := now.Format("2006-01-02") // YYYY-MM-DD format
+
+	// Fetch the ConfigMap
+	cm := &corev1.ConfigMap{}
+	if err = r.Get(ctx, types.NamespacedName{
+		Namespace: namespace,
+		Name:      configMapName,
+	}, cm); err != nil {
+		if apierrors.IsNotFound(err) {
+			// ConfigMap doesn't exist - not a holiday
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get ConfigMap: %w", err)
+	}
+
+	// Check if today's date is in the ConfigMap data
+	if cm.Data != nil {
+		if _, exists := cm.Data[todayKey]; exists {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // scaleDeployment patches the deployment with new replica count
@@ -250,7 +362,10 @@ func (r *TimeWindowScalerReconciler) handleMissingTarget(ctx context.Context, tw
 
 // computeAndUpdateStatus computes status when paused
 func (r *TimeWindowScalerReconciler) computeAndUpdateStatus(ctx context.Context, tws *kyklosv1alpha1.TimeWindowScaler, deployment *appsv1.Deployment) (ctrl.Result, error) {
-	engineInput := r.buildEngineInput(tws)
+	engineInput, err := r.buildEngineInput(ctx, tws)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	engineOutput, err := engine.ComputeEffectiveReplicas(engineInput)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -276,7 +391,7 @@ func (r *TimeWindowScalerReconciler) computeAndUpdateStatus(ctx context.Context,
 
 	meta.SetStatusCondition(&tws.Status.Conditions, readyCondition)
 
-	if err := r.Status().Update(ctx, tws); err != nil {
+	if err = r.Status().Update(ctx, tws); err != nil {
 		return ctrl.Result{}, err
 	}
 

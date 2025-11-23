@@ -375,6 +375,136 @@ var _ = Describe("TimeWindowScaler Controller", func() {
 				return ""
 			}, timeout, interval).Should(Equal("TargetNotFound"))
 		})
+
+		It("Should handle holiday ConfigMap correctly", func() {
+			// Use unique names for this test
+			holidayDeploymentName := "holiday-test-deployment"
+			holidayTWSName := "holiday-test-tws"
+
+			// Create a holiday ConfigMap
+			holidayConfigMapName := "test-holidays"
+			holidayConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holidayConfigMapName,
+					Namespace: namespace,
+				},
+				Data: map[string]string{
+					"2025-01-01": "New Year's Day",
+					"2025-12-25": "Christmas",
+				},
+			}
+			Expect(k8sClient.Create(ctx, holidayConfigMap)).To(Succeed())
+
+			// Create test deployment with 1 replica
+			holidayDeployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holidayDeploymentName,
+					Namespace: namespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: ptr(1),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": holidayDeploymentName,
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app": holidayDeploymentName,
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "test",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, holidayDeployment)).To(Succeed())
+
+			// Create TimeWindowScaler with holiday mode
+			holidayTWS := &kyklosv1alpha1.TimeWindowScaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holidayTWSName,
+					Namespace: namespace,
+				},
+				Spec: kyklosv1alpha1.TimeWindowScalerSpec{
+					TargetRef: kyklosv1alpha1.TargetRef{
+						Name: holidayDeploymentName,
+					},
+					Timezone:         "UTC",
+					DefaultReplicas:  1,
+					HolidayMode:      "treat-as-closed",
+					HolidayConfigMap: &holidayConfigMapName,
+					Windows: []kyklosv1alpha1.TimeWindow{
+						{
+							Start:    "09:00",
+							End:      "17:00",
+							Replicas: 5,
+							Name:     "business-hours",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, holidayTWS)).To(Succeed())
+
+			// Create reconciler with fake clock set to a holiday
+			fakeClock := &engine.FakeClock{
+				Time: time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), // New Year's Day at 10 AM
+			}
+			reconciler = &TimeWindowScalerReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: record.NewFakeRecorder(10),
+				Clock:    fakeClock,
+			}
+
+			// Reconcile
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      holidayTWSName,
+					Namespace: namespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+			// Check deployment should be scaled to 0 (holiday mode treat-as-closed)
+			Eventually(func() int32 {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      holidayDeploymentName,
+					Namespace: namespace,
+				}, holidayDeployment)
+				if err != nil {
+					return -1
+				}
+				return *holidayDeployment.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(0)))
+
+			// Now test with non-holiday date
+			fakeClock.Time = time.Date(2025, 3, 10, 10, 0, 0, 0, time.UTC) // Regular Monday at 10 AM
+			result, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Check deployment should be scaled to 5 (within business hours)
+			Eventually(func() int32 {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      holidayDeploymentName,
+					Namespace: namespace,
+				}, holidayDeployment)
+				if err != nil {
+					return -1
+				}
+				return *holidayDeployment.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(5)))
+		})
 	})
 })
 
