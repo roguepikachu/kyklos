@@ -239,6 +239,10 @@ endef
 
 ##@ Kyklos Custom Targets
 
+.PHONY: tidy
+tidy: ## Run go mod tidy to clean up dependencies
+	go mod tidy
+
 .PHONY: install-tools
 install-tools: kustomize controller-gen envtest golangci-lint ## Install all required development tools
 	@echo "All development tools installed successfully in $(LOCALBIN)"
@@ -287,3 +291,54 @@ smoke-test: ## Run quick smoke test (30 seconds) - requires live cluster
 sanity-test: ## Run full sanity test (3 minutes) - requires live cluster
 	@echo "Running Kyklos sanity test..."
 	@./test/sanity/run-sanity-test.sh
+
+##@ K3d Cluster Management
+
+.PHONY: k3d-create
+k3d-create: ## Create k3d cluster for testing
+	@echo "Creating k3d cluster 'kyklos-test'..."
+	@k3d cluster create kyklos-test --agents 0 --wait || echo "Cluster may already exist"
+	@kubectl config use-context k3d-kyklos-test
+
+.PHONY: k3d-delete
+k3d-delete: ## Delete k3d cluster
+	@echo "Deleting k3d cluster 'kyklos-test'..."
+	@k3d cluster delete kyklos-test
+
+.PHONY: k3d-deploy
+k3d-deploy: docker-build ## Build, load image to k3d, and deploy Kyklos
+	@echo "Loading image into k3d cluster..."
+	k3d image import $(IMG) -c kyklos-test
+	@echo "Installing CRDs..."
+	$(MAKE) install
+	@echo "Deploying controller..."
+	$(MAKE) deploy IMG=$(IMG)
+	@echo "Waiting for controller to be ready..."
+	kubectl wait --for=condition=available --timeout=60s deployment/kyklos-controller-manager -n kyklos-system || true
+	@echo "✓ Kyklos deployed to k3d cluster"
+
+.PHONY: k3d-test
+k3d-test: k3d-create k3d-deploy smoke-test ## Create cluster, deploy, and run smoke test
+	@echo "✓ K3d test complete"
+
+.PHONY: k3d-demo
+k3d-demo: k3d-create k3d-deploy ## Create cluster, deploy, and run sanity demo
+	@echo "Running sanity demo..."
+	$(MAKE) sanity-test
+
+.PHONY: k3d-status
+k3d-status: ## Show k3d cluster and Kyklos status
+	@echo "=========================================="
+	@echo "K3d Cluster Status"
+	@echo "=========================================="
+	@k3d cluster list | grep kyklos || echo "No kyklos cluster found"
+	@echo ""
+	@echo "=========================================="
+	@echo "Kyklos Controller Status"
+	@echo "=========================================="
+	@kubectl get pods -n kyklos-system 2>/dev/null || echo "Controller not deployed"
+	@echo ""
+	@echo "=========================================="
+	@echo "TimeWindowScalers"
+	@echo "=========================================="
+	@kubectl get tws --all-namespaces 2>/dev/null || echo "No TimeWindowScalers found"
