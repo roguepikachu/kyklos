@@ -26,6 +26,9 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      - name: Clean local binaries
+        run: rm -rf bin/
+
       - name: Running Test e2e
         run: |
           go mod tidy

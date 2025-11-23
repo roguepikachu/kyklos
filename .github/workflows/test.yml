@@ -17,6 +17,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Clean local binaries
+        run: rm -rf bin/
+
       - name: Running Tests
         run: |
           go mod tidy
