@@ -24,187 +24,35 @@ This plan details the remaining work to complete Kyklos v0.1, taking the project
 
 ## Implementation Tasks
 
-### Task 1: Grace Period Timing Logic
+### Task 1: Grace Period Timing Logic - COMPLETED
+**File:** /Users/aykumar/personal/kyklos/internal/engine/schedule.go
+
+**Status:** Fully implemented and tested. Grace period logic in `computeWithoutPause()` checks for scale-down operations and maintains current replicas until grace period expires. NextBoundary set to grace period expiry time.
+
+---
+
+### Task 2: Holiday ConfigMap Reading - COMPLETED
 **File:** /Users/aykumar/personal/kyklos/internal/controller/timewindowscaler_controller.go
 
-**Current State:**
-- Grace period field exists in Input struct (line 44: GracePeriodSecs)
-- LastScaleTime tracking exists (lines 206-208)
-- Engine receives grace period data but doesn't use it for timing decisions
-
-**Required Changes:**
-1. Modify engine.ComputeEffectiveReplicas() to check:
-   - If scaling down (CurrentReplicas > computed replicas)
-   - If LastScaleTime + GracePeriodSecs > Now
-   - If yes, return CurrentReplicas (maintain current) with reason "grace-period-active"
-2. Update Output struct to include GracePeriodRemaining field
-3. When grace period active, set NextBoundary to LastScaleTime + GracePeriodSecs
-4. Update status to show grace period state in conditions
-
-**Acceptance Criteria:**
-- Scale-down delayed by gracePeriodSeconds
-- Scale-up happens immediately (no grace period)
-- Status shows "GracePeriod" reason when active
-- NextBoundary correctly set to grace period end time
-- Tests validate grace period behavior
-
-**Estimated Time:** 3 hours
+**Status:** Fully implemented. Controller reads `spec.holidayConfigMap`, fetches ConfigMap, checks date keys in TWS timezone. All three modes (ignore, treat-as-closed, treat-as-open) working. Missing ConfigMap handled gracefully with Degraded condition.
 
 ---
 
-### Task 2: Holiday ConfigMap Reading
-**File:** /Users/aykumar/personal/kyklos/internal/controller/timewindowscaler_controller.go
+### Task 3: Prometheus Metrics Implementation - COMPLETED
+**File:** /Users/aykumar/personal/kyklos/internal/controller/metrics.go
 
-**Current State:**
-- TODO comment at line 198: `IsHoliday: false, // TODO: check holiday ConfigMap`
-- HolidayMode passed to engine but IsHoliday always false
-- Engine logic for holiday handling exists (lines 85-111)
-
-**Required Changes:**
-1. Add RBAC for ConfigMap reading:
-   - Update controller markers for ConfigMap get/list permissions
-   - Run `make manifests` to regenerate RBAC
-2. Implement readHolidayConfigMap() helper function:
-   - Check if tws.Spec.Holidays is configured
-   - If yes, fetch ConfigMap by name from appropriate namespace
-   - Parse data keys as YYYY-MM-DD dates
-   - Return true if today's date (in TWS timezone) matches any key
-3. Call readHolidayConfigMap() in buildEngineInput()
-4. Handle ConfigMap not found error:
-   - Set Degraded condition
-   - Log warning
-   - Continue with IsHoliday=false
-
-**Acceptance Criteria:**
-- Controller reads holiday ConfigMap when configured
-- Today's date checked in TWS timezone
-- Holiday modes (ignore, closed, open) work correctly
-- Missing ConfigMap handled gracefully with status condition
-- Events emitted for holiday state changes
-- Tests validate all three holiday modes
-
-**Estimated Time:** 4 hours
+**Status:** Fully implemented. Four custom metrics exported:
+- `kyklos_scale_operations_total` (counter with direction/result labels)
+- `kyklos_current_effective_replicas` (gauge per TWS)
+- `kyklos_window_transitions_total` (counter per TWS)
+- `kyklos_reconcile_duration_seconds` (histogram per TWS)
 
 ---
 
-### Task 3: Prometheus Metrics Implementation
-**Files:**
-- /Users/aykumar/personal/kyklos/internal/controller/timewindowscaler_controller.go
-- /Users/aykumar/personal/kyklos/internal/controller/metrics.go (new)
-
-**Current State:**
-- Metrics endpoint exists (from kubebuilder scaffold) on port 8443
-- No custom metrics defined
-- E2E test expects controller_runtime_reconcile_total metric
-
-**Required Changes:**
-1. Create metrics.go with Prometheus collectors:
-   ```go
-   var (
-     scaleOperationsTotal = prometheus.NewCounterVec(
-       prometheus.CounterOpts{
-         Name: "kyklos_scale_operations_total",
-         Help: "Total number of scaling operations by direction and result",
-       },
-       []string{"tws_name", "tws_namespace", "direction", "result"},
-     )
-
-     currentEffectiveReplicas = prometheus.NewGaugeVec(
-       prometheus.GaugeOpts{
-         Name: "kyklos_current_effective_replicas",
-         Help: "Current effective replicas for each TimeWindowScaler",
-       },
-       []string{"tws_name", "tws_namespace"},
-     )
-
-     windowTransitionsTotal = prometheus.NewCounterVec(
-       prometheus.CounterOpts{
-         Name: "kyklos_window_transitions_total",
-         Help: "Total window transitions by TWS",
-       },
-       []string{"tws_name", "tws_namespace", "from_window", "to_window"},
-     )
-
-     reconcileDuration = prometheus.NewHistogramVec(
-       prometheus.HistogramOpts{
-         Name: "kyklos_reconcile_duration_seconds",
-         Help: "Time spent in reconcile loop",
-       },
-       []string{"tws_name", "tws_namespace"},
-     )
-   )
-   ```
-
-2. Register metrics in init() or SetupWithManager()
-3. Instrument reconcile loop:
-   - Increment scaleOperationsTotal on scale operations
-   - Update currentEffectiveReplicas gauge
-   - Track window transitions
-   - Measure reconcile duration
-4. Add metrics documentation to docs/user/OPERATIONS.md
-
-**Acceptance Criteria:**
-- Metrics endpoint exposes custom kyklos_* metrics
-- Scale operations tracked with direction labels (up/down)
-- Current effective replicas gauge accurate
-- Reconcile duration histogram populated
-- E2E test can scrape metrics successfully
-- Metrics documented in operations guide
-
-**Estimated Time:** 5 hours
-
----
-
-### Task 4: E2E Test Scenarios
+### Task 4: E2E Test Scenarios - COMPLETED
 **File:** /Users/aykumar/personal/kyklos/test/e2e/e2e_test.go
 
-**Current State:**
-- E2E suite scaffolded (lines 45-271)
-- Tests for controller deployment and metrics endpoint exist
-- TODO comment at line 262 for custom scenarios
-- No TimeWindowScaler-specific tests
-
-**Required Changes:**
-1. Add test: "should scale deployment based on time window"
-   - Create test deployment with 1 replica
-   - Create TWS with current time in window (10 replicas)
-   - Wait for deployment to scale to 10
-   - Update TWS to move window to future
-   - Wait for deployment to scale to defaultReplicas
-
-2. Add test: "should respect grace period on scale down"
-   - Create deployment with 10 replicas
-   - Create TWS with grace period 60s, window just ended
-   - Verify replicas stay at 10 for 60+ seconds
-   - Verify replicas scale down after grace period
-
-3. Add test: "should handle holiday ConfigMap"
-   - Create holiday ConfigMap with today's date
-   - Create TWS with holidayMode: treat-as-closed
-   - Verify deployment scales to 0
-   - Change mode to treat-as-open
-   - Verify deployment scales to max window replicas
-
-4. Add test: "should handle cross-midnight windows"
-   - Create TWS with window 22:00-02:00
-   - Use minute-scale time for fast testing
-   - Verify scaling behavior across midnight boundary
-
-5. Add test: "should respect pause mode"
-   - Create TWS with pause: true
-   - Verify deployment not scaled
-   - Verify status shows computed state
-   - Set pause: false
-   - Verify scaling resumes
-
-**Acceptance Criteria:**
-- All 5 E2E tests pass reliably
-- Tests use minute-scale windows for speed (complete in <5 min)
-- Tests clean up resources properly
-- Tests emit useful failure diagnostics
-- CI can run tests (add to GitHub Actions workflow)
-
-**Estimated Time:** 8 hours
+**Status:** 5 test scenarios implemented covering: time window scaling, grace period, holiday ConfigMap, cross-midnight windows, and pause mode.
 
 ---
 

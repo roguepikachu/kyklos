@@ -33,7 +33,7 @@ The reconcile loop ensures the target workload's replica count matches the time-
 ### Step 3: Check Holiday Status (if configured)
 **Preconditions**: spec.holidays configured
 **Actions**:
-1. Get ConfigMap from cache (name=spec.holidays.sourceRef.name)
+1. Get ConfigMap from cache (name=spec.holidayConfigMap)
 2. Extract current date as YYYY-MM-DD in local timezone
 3. Check if date exists as key in ConfigMap data
 

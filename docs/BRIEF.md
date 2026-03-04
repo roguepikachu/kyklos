@@ -37,7 +37,7 @@ Kyklos is a Kubernetes operator that scales workloads based on time windows with
 ## Out of Scope for v0.1
 - Web UI or dashboard
 - Slack/email notifications
-- Multiple time windows per day (single window only)
+- Web UI or notification integrations
 - Permanent deletion or cascading cleanup
 - Backup/restore integration
 - GitOps workflow automation
@@ -50,7 +50,7 @@ Kyklos is a Kubernetes operator that scales workloads based on time windows with
 - Targets support replica scaling (Deployment, StatefulSet, ReplicaSet)
 
 ## Constraints
-- Single time window per TimeWindowScaler resource
+- Multiple time windows supported per TimeWindowScaler resource
 - Time windows are daily recurring only
 - DST transitions use Go time.Location standard library
 - Controller runs as single replica (no HA in v0.1)

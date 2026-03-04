@@ -17,13 +17,11 @@ Reference to the target resource to scale.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `apiVersion` | string | `apps/v1` | API version of the target resource |
-| `kind` | string | required | Resource kind. Must be `Deployment` in v1alpha1 |
-| `name` | string | required | Name of the target resource |
-| `namespace` | string | object namespace | Namespace of the target resource |
+| `name` | string | required | Name of the target Deployment |
+| `namespace` | string | object namespace | Namespace of the target Deployment |
 
 **Validation Rules**:
-- `kind` must equal `Deployment` in v1alpha1 (enforced by CRD enum validation)
+- Only `Deployment` targets supported in v1alpha1
 - `name` must be non-empty (enforced by Kubernetes)
 - `namespace` may differ from TimeWindowScaler namespace (cross-namespace requires ClusterRole, see ADR-0002)
 
@@ -37,7 +35,7 @@ Reference to the target resource to scale.
 ### spec.defaultReplicas
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `defaultReplicas` | int32 | `0` | Replica count when no windows match |
+| `defaultReplicas` | int32 | `1` | Replica count when no windows match |
 
 **Validation**: Must be >= 0
 
@@ -53,7 +51,7 @@ Array of time windows defining when and how to scale.
 
 **Validation Rules**:
 - `windows` array must have at least 1 element
-- `days` must contain at least one valid day enum: `Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`, `Sun`
+- `days` must contain valid full day names: `Monday`, `Tuesday`, `Wednesday`, `Thursday`, `Friday`, `Saturday`, `Sunday` (per Go's `Weekday().String()`)
 - `start` and `end` must match pattern `^([0-1][0-9]|2[0-3]):[0-5][0-9]$`
 - `start` must not equal `end` (rejected at runtime)
 - `replicas` must be >= 0
@@ -63,25 +61,27 @@ Array of time windows defining when and how to scale.
 - If `end` < `start`, window crosses midnight into the next calendar day
 - Overlapping windows allowed; last matching window in array wins (precedence by position)
 
-### spec.holidays (optional)
-Holiday handling configuration.
-
+### spec.holidayMode (optional)
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mode` | string | `ignore` | How to handle holidays |
-| `sourceRef.name` | string | optional | ConfigMap name containing holiday dates |
+| `holidayMode` | string | `ignore` | How to handle holidays |
 
-**Mode Enum Values**:
+**Enum Values**:
 - `ignore` (default): Process windows normally on holidays, no special handling
 - `treat-as-closed`: No windows match on holiday dates (uses defaultReplicas)
 - `treat-as-open`: Synthetic window with replicas = max(all defined window replicas)
+
+### spec.holidayConfigMap (optional)
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `holidayConfigMap` | string | none | Name of ConfigMap containing holiday dates |
 
 **ConfigMap Format**: Keys must be ISO dates `yyyy-mm-dd`, values are ignored
 
 ### spec.gracePeriodSeconds
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `gracePeriodSeconds` | int32 | `0` | Delay before applying downscale |
+| `gracePeriodSeconds` | int32 | `300` | Delay before applying downscale |
 
 **Semantics**: Only applies when transitioning to fewer replicas. Timer starts when leaving a window state.
 
@@ -171,7 +171,7 @@ When `end` < `start`:
 - Example: Friday 22:00 to 02:00 matches Friday 22:00-23:59 and Saturday 00:00-01:59
 
 ### Holiday Processing
-1. Check if current date exists as key in holiday ConfigMap
+1. Check if current date exists as key in ConfigMap referenced by `spec.holidayConfigMap`
 2. If holiday detected:
    - `ignore`: Continue normal window matching
    - `treat-as-closed`: Return defaultReplicas immediately

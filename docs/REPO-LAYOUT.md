@@ -13,24 +13,20 @@ This document defines the repository structure, directory purposes, and ownershi
 ```
 kyklos/
 ├── cmd/
-│   └── controller/
-│       └── main.go              # Controller entry point
+│   └── main.go                  # Controller entry point
 ├── api/
 │   └── v1alpha1/
 │       ├── timewindowscaler_types.go
 │       ├── groupversion_info.go
 │       └── zz_generated.deepcopy.go
-├── controllers/
-│   ├── timewindowscaler_controller.go
-│   ├── timewindowscaler_controller_test.go
-│   └── timecalc/                # Time calculation logic package
-│       ├── state.go
-│       ├── requeue.go
-│       └── state_test.go
 ├── internal/
-│   ├── webhook/                 # Admission webhook logic
-│   │   ├── validator.go
-│   │   └── validator_test.go
+│   ├── controller/              # Kubernetes controller implementation
+│   │   ├── timewindowscaler_controller.go
+│   │   ├── timewindowscaler_controller_test.go
+│   │   └── metrics.go
+│   ├── engine/                  # Pure time calculation logic (no K8s deps)
+│   │   ├── schedule.go
+│   │   └── schedule_test.go
 │   └── metrics/                 # Metrics and instrumentation
 │       ├── metrics.go
 │       └── recorder.go
@@ -59,7 +55,10 @@ kyklos/
 ├── test/
 │   ├── e2e/                     # End-to-end tests
 │   │   ├── suite_test.go
-│   │   └── timewindowscaler_test.go
+│   │   └── e2e_test.go
+│   ├── sanity/                  # Smoke and sanity test scripts
+│   │   ├── smoke-test.sh
+│   │   └── run-sanity-test.sh
 │   ├── fixtures/                # Test data (fixed dates, timezones)
 │   │   ├── dst-spring-forward.yaml
 │   │   └── dst-fall-back.yaml
@@ -111,12 +110,12 @@ kyklos/
 
 ## Directory Purposes and Ownership
 
-### `/cmd/controller/`
+### `/cmd/`
 **Purpose:** Controller binary entry point
 **Owner:** controller-reconcile-designer
 **Contents:** main.go with manager setup, flag parsing, webhook/metrics server init
 **Rules:**
-- Must remain minimal (delegate to controllers/ and internal/)
+- Must remain minimal (delegate to internal/)
 - No business logic in main.go
 
 ---
@@ -133,21 +132,21 @@ kyklos/
 
 ---
 
-### `/controllers/`
+### `/internal/controller/`
 **Purpose:** Reconcile loop implementation
 **Owner:** controller-reconcile-designer
-**Contents:** TimeWindowScalerReconciler and supporting packages
+**Contents:** TimeWindowScalerReconciler, metrics, and supporting logic
 **Rules:**
 - Reconcile function must be idempotent
 - Test coverage >= 80%
-- Use timecalc/ subpackage for time logic (facilitates testing)
+- Uses engine/ package for time logic (facilitates testing)
 
 ---
 
-### `/controllers/timecalc/`
-**Purpose:** Time calculation and state determination logic
+### `/internal/engine/`
+**Purpose:** Pure time calculation and state determination logic
 **Owner:** controller-reconcile-designer
-**Contents:** Pure functions for state machine, requeue timing, DST handling
+**Contents:** Pure functions for window matching, requeue timing, DST handling
 **Rules:**
 - **No Kubernetes client dependencies** (must be unit testable)
 - Accept current time as parameter (enables time mocking)
